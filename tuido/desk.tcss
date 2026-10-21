@@ -1,0 +1,61 @@
+/* Ink-blue desk; amber marks reading, sea glass marks completion. */
+Screen { background: #101d2b; color: #dbe6ef; }
+#masthead { height: 3; padding: 1 2 0 2; }
+#brand { width: 1fr; color: #a6dace; }
+#date { width: auto; color: #8fa5bb; }
+#navigation { height: 3; padding: 0 1; }
+#navigation Button { min-width: 8; height: 3; margin-right: 1; }
+#overview { width: 1fr; content-align: left middle; color: #8fa5bb; padding-left: 1; }
+#desk { height: 1fr; padding: 1; }
+.panel { background: #142437; border: round #334d65; padding: 0 1; height: 1fr; }
+.panel:focus-within { border: round #83b8ce; }
+#library { width: 29; min-width: 19; margin-right: 1; }
+#contents { width: 1fr; min-width: 25; }
+#journal { width: 34; min-width: 25; margin-left: 1; border: round #66728c; }
+.heading { height: auto; min-height: 2; padding: 1 0 0 0; text-style: bold; color: #c7dbea; }
+DataTable { background: transparent; height: 1fr; margin-top: 1; scrollbar-size: 1 1; }
+DataTable > .datatable--header { background: #1b3147; color: #8fa5bb; text-style: none; }
+DataTable > .datatable--cursor { background: #294b65; color: #f0f6fc; }
+DataTable > .datatable--hover { background: #203b51; }
+DataTable:focus > .datatable--cursor { background: #365e78; }
+#progress { height: auto; max-height: 7; padding: 1 0; }
+#habit-detail { height: 1fr; padding-top: 1; }
+#skills-detail { height: 1fr; padding-top: 1; }
+#skill-description { height: auto; margin-bottom: 1; }
+#learning-info { max-height: 5; }
+#learning-actions Button { min-width: 8; }
+#habit-summary { height: auto; margin-bottom: 1; }
+#heatmap { height: auto; padding: 1 0; }
+#habit-legend { color: #8fa5bb; height: auto; padding: 1 0; }
+.hint { height: auto; padding: 1 0; color: #8fa5bb; }
+.empty { height: auto; padding: 2 0; color: #8fa5bb; }
+.buttons { height: auto; min-height: 3; }
+Button { background: #20364c; color: #c7dbea; border: none; min-width: 10; margin: 0 1 0 0; }
+Button.-primary { background: #31566b; color: #f0f6fc; }
+Button:focus { text-style: bold; border: tall #83b8ce; }
+#add-item, #jot { width: 100%; margin-bottom: 1; }
+#journal-nav { height: 3; margin-top: 1; }
+#journal-nav Button { min-width: 5; width: 1fr; }
+#journal-summary { height: 2; color: #b7adc9; margin-top: 1; }
+#status { height: 1; padding: 0 2; color: #b7c8d9; }
+Footer { background: #1b3147; }
+Footer > .footer--key { background: #31566b; color: #e4f4f0; }
+.compact #library { width: 21; }
+.compact #overview { display: none; }
+.compact #navigation Button { margin-right: 0; }
+.compact #learning-actions { layout: vertical; height: 9; }
+.compact #learning-info { max-height: 3; }
+.compact #journal { width: 26; min-width: 22; }
+.compact #desk { padding: 0; }
+.compact .panel { padding: 0; }
+.compact #chapter-actions { layout: vertical; height: 6; }
+Form, Help { align: center middle; background: #08111bb0; }
+#dialog { width: 64; max-width: 95%; height: auto; max-height: 90%; background: #142437; border: round #83b8ce; padding: 1 2; }
+.dialog-title { text-style: bold; color: #a6dace; margin-bottom: 1; }
+#dialog Input { margin: 0 0 1 0; background: #101d2b; border: tall #334d65; }
+#dialog Input:focus { border: tall #83b8ce; }
+#dialog TextArea { height: 8; margin-bottom: 1; border: tall #334d65; }
+#dialog Static { height: auto; }
+#dialog .buttons { margin-top: 1; }
+#form-error { color: #efb094; }
+#close-help { margin-top: 1; }

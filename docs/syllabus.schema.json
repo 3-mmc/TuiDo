@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TuiDo syllabus",
+  "type": "object",
+  "required": ["version", "id", "title", "modules"],
+  "properties": {
+    "version": {"const": 1},
+    "id": {"$ref": "#/$defs/id"},
+    "title": {"type": "string", "minLength": 1, "maxLength": 500},
+    "description": {"type": "string", "maxLength": 20000},
+    "mermaid": {"type": "string", "maxLength": 20000},
+    "ascii": {"type": "string", "maxLength": 20000},
+    "ascii_piece": {"$ref": "#/$defs/piece"},
+    "resources": {"type": "array", "maxItems": 2000, "items": {"$ref": "#/$defs/resource"}},
+    "modules": {"type": "array", "maxItems": 2000, "items": {"$ref": "#/$defs/activity"}},
+    "skills": {"type": "array", "maxItems": 2000, "items": {"$ref": "#/$defs/skill"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "maxLength": 160, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"},
+    "piece": {"type": "string", "maxLength": 100, "pattern": "^([a-z0-9]+(-[a-z0-9]+)*)?$"},
+    "chapter": {
+      "type": "object", "required": ["id", "title"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "title": {"type": "string", "minLength": 1, "maxLength": 500}}
+    },
+    "resource": {
+      "type": "object", "required": ["id", "title"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "title": {"type": "string", "minLength": 1, "maxLength": 500},
+        "type": {"enum": ["book", "video", "article", "course", "other"]},
+        "url": {"type": "string", "maxLength": 4000, "pattern": "^(https?://.+)?$"},
+        "textbook": {"type": "boolean"},
+        "chapters": {"type": "array", "maxItems": 2000, "items": {"$ref": "#/$defs/chapter"}}
+      }
+    },
+    "activity": {
+      "type": "object", "required": ["id", "title"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "title": {"type": "string", "minLength": 1, "maxLength": 500},
+        "kind": {"enum": ["module", "read", "video", "article", "exercise", "project", "note"]},
+        "optional": {"type": "boolean"}, "resource": {"$ref": "#/$defs/id"}, "chapter": {"$ref": "#/$defs/id"},
+        "notes": {"type": "string", "maxLength": 20000}, "mermaid": {"type": "string", "maxLength": 20000},
+        "ascii": {"type": "string", "maxLength": 20000}, "ascii_piece": {"$ref": "#/$defs/piece"},
+        "requires": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+        "children": {"type": "array", "maxItems": 2000, "items": {"$ref": "#/$defs/activity"}}
+      }
+    },
+    "skill": {
+      "type": "object", "required": ["id", "title"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "title": {"type": "string", "minLength": 1, "maxLength": 500},
+        "criteria": {"type": "array", "items": {"$ref": "#/$defs/id"}}
+      }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tuido"
+version = "0.2.0"
+description = "Learning paths, a reading library, habits, and a daily bullet journal in your terminal"
+requires-python = ">=3.11"
+dependencies = ["textual>=8.2.8,<9"]
+
+[project.scripts]
+tuido = "tuido.__main__:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
