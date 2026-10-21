@@ -87,9 +87,11 @@ evidence, so an agent can revise them without receiving your entire journal.
 
 ## Diagrams and ASCII art
 
-Press **v** in Paths to open a local browser preview with a generated learning
-map, attached Mermaid diagrams, and artwork. Press **i** to inspect notes, plain
-ASCII art, resource links, and diagram source inside the terminal.
+Press **v** in Paths to open an in-app, expandable learning map with completion
+progress, book sources, prerequisites, and ASCII artwork. Escape returns to your
+path. Press **i** to inspect notes and resource links. Attached Mermaid source is
+available inside the visual view; export HTML for rendered Mermaid diagrams and
+animated web scenes.
 
 ```sh
 uv run tuido --render-syllabus my-path-id --output syllabus.html
@@ -115,7 +117,7 @@ Magic player's reduced-motion behavior. No Node dependency is required by TuiDo.
 | `c` | Add a child inside the selected module |
 | `n` | Continue the next ready required activity |
 | `p` | Plan selected activity or chapter for today |
-| `i` / `v` | Inspect notes / open syllabus visual preview |
+| `i` / `v` | Inspect notes / open in-app learning map |
 | `r` | Edit selected item's text |
 | Delete | Delete item, or archive activity; Ctrl+Z restores it |
 | `e` | Toggle textbook exercises in Library |

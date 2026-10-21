@@ -13,6 +13,18 @@ from .store import Store
 from .learning_ui import LearningUI
 
 
+class WrappingTable(DataTable):
+    """Refit wrapped rows after layout, including when a hidden pane reappears."""
+
+    def on_resize(self):
+        self.call_after_refresh(self.refit)
+
+    def refit(self):
+        if self.display and self.size.width and hasattr(self, "wrapped_rows"):
+            if self.size.width != self.filled_width:
+                self.app.fill(f"#{self.id}", self.wrapped_rows)
+
+
 class Form(ModalScreen[dict | None]):
     BINDINGS = [("escape", "cancel", "Cancel")]
 
@@ -192,7 +204,7 @@ class Tuido(LearningUI, App):
         with Horizontal(id="desk"):
             with Vertical(id="library", classes="panel"):
                 yield Label("Books", id="library-title", classes="heading")
-                yield DataTable(id="items", cursor_type="row", show_header=False, show_row_labels=False)
+                yield WrappingTable(id="items", cursor_type="row", show_header=False, show_row_labels=False)
                 yield Static("", id="library-empty", classes="empty")
                 yield Button("+ Book", id="add-item")
                 yield Button("Import syllabus", id="import-syllabus")
@@ -200,7 +212,7 @@ class Tuido(LearningUI, App):
                 yield Label("Choose a book", id="detail-title", classes="heading")
                 yield Static("", id="progress")
                 yield DataTable(id="chapters", cursor_type="row", show_row_labels=False)
-                yield DataTable(id="syllabus", cursor_type="row", show_header=False, show_row_labels=False)
+                yield WrappingTable(id="syllabus", cursor_type="row", show_header=False, show_row_labels=False)
                 with VerticalScroll(id="skills-detail"):
                     yield Static("", id="skill-description")
                     yield Button("Record progress & evidence", id="edit-skill")
@@ -229,7 +241,7 @@ class Tuido(LearningUI, App):
                     yield Button("Today", id="current-day")
                     yield Button("›", id="next-day")
                 yield Static("", id="journal-summary")
-                yield DataTable(id="bullets", cursor_type="row", show_header=False, show_row_labels=False)
+                yield WrappingTable(id="bullets", cursor_type="row", show_header=False, show_row_labels=False)
                 yield Static("", id="journal-empty", classes="empty")
                 yield Static("• task   × done   – note\nCtrl+Y carries an old task to today", classes="hint")
                 yield Button("+ Jot something", id="jot")
@@ -280,7 +292,18 @@ class Tuido(LearningUI, App):
             wrapped = selector in {"#items", "#bullets", "#syllabus"}
             table.clear(columns=wrapped)
             if wrapped:
-                table.add_column("Item", width=max(8, table.size.width - 2))
+                table.wrapped_rows = rows
+                table.filled_width = table.size.width
+                # Reserve the scrollbar even before it appears, to avoid a
+                # width/height feedback loop when long rows start wrapping.
+                available = max(1, table.size.width - table.styles.scrollbar_size_vertical)
+                padding = 2 * table.cell_padding
+                if selector == "#syllabus":
+                    kind_width = min(8, max(1, available - 5))
+                    table.add_column("Activity", width=max(1, available - kind_width - 2 * padding))
+                    table.add_column("Type", width=kind_width)
+                else:
+                    table.add_column("Item", width=max(1, available - padding))
             for item_id, cells in rows:
                 table.add_row(*cells, key=str(item_id), height=None if wrapped else 1)
             ids = [item_id for item_id, _ in rows]
@@ -378,7 +401,7 @@ class Tuido(LearningUI, App):
             progress.append(f"\n{done}/{len(chapters)} chapters read", style="#b7c8d9")
             self.query_one("#detail-title", Label).update(Text(book["title"]))
             self.query_one("#progress", Static).update(progress)
-            self.fill("#chapters", [(c["id"], [Text(("□", "◧", "■")[c["reading"]], style=("#667d94", "#e5bc72", "#74c5b2")[c["reading"]]), Text(f'{n+1:02}  {c["title"]}'), ("✓" if c["exercises"] else "□") if book["textbook"] else "—"]) for n,c in enumerate(chapters)])
+            self.fill("#chapters", [(c["id"], [Text(("□", "◧", "■")[c["reading"]], style=("#667d94", "#e5bc72", "#74c5b2")[c["reading"]]), Text(c["title"]), ("✓" if c["exercises"] else "□") if book["textbook"] else "—"]) for c in chapters])
             self.query_one("#detail-empty").display = not chapters
             self.query_one("#detail-empty", Static).update("Add chapters below, or paste a chapter list when creating a book.")
             self.query_one("#detail-hint", Static).update("Enter / Space: reading status   e: exercises   p: plan today" if book["textbook"] else "Enter / Space: reading status   p: plan today")
@@ -438,6 +461,11 @@ class Tuido(LearningUI, App):
         self.query_one("#bullets").display = bool(bullets)
         self.query_one("#journal-empty").display = not bullets
         self.query_one("#journal-empty", Static).update("A fresh page.\nJot a task or a thought below.")
+
+    @on(DataTable.RowHighlighted, "#syllabus")
+    def highlighted_activity(self):
+        if self.mode == "paths":
+            self.render_activity_info()
 
     @on(DataTable.RowHighlighted, "#items")
     def selected_item(self, event):

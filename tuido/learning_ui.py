@@ -2,21 +2,88 @@
 
 from datetime import date
 import json
-from pathlib import Path
-import tempfile
-import webbrowser
 
 from rich.text import Text
 from textual import on
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, DataTable, Label, Static
+from textual.widgets import Button, Collapsible, DataTable, Label, Static, Tree
 
 from .syllabus import KINDS, SyllabusError, load_syllabus
-from .visuals import render_path_html
 
 LEVELS = ("Not yet", "Explored", "Practised", "Demonstrated")
 COLORS = ("#667d94", "#e5bc72", "#74c5b2")
+
+
+def activity_title(node):
+    """Keep imported action prefixes out of the title when Type already shows them."""
+    title = node["title"]
+    prefix = node["kind"] + ":"
+    return title[len(prefix):].lstrip() if title.lower().startswith(prefix) else title
+
+
+class VisualPanel(ModalScreen):
+    BINDINGS = [("escape", "dismiss", "Close")]
+
+    def __init__(self, store, path_id, selected=None):
+        super().__init__()
+        self.path = store.rows("SELECT * FROM paths WHERE id=?", (path_id,))[0]
+        self.nodes, self.path_children, self.states = store.learning_snapshot(path_id)
+        self.resources = {r["uid"]: r for r in store.rows("SELECT * FROM resources")}
+        self.selected = selected
+
+    def compose(self):
+        with Vertical(id="visual-dialog"):
+            yield Label(Text(self.path["title"]), classes="dialog-title")
+            with VerticalScroll(id="visual-content"):
+                if self.path["description"]:
+                    yield Static(Text(self.path["description"]))
+                leaves = [i for i in self.nodes if not self.path_children.get(i)]
+                done = sum(self.states[i] == 2 for i in leaves)
+                fraction = round(20 * done / len(leaves)) if leaves else 0
+                yield Static(Text("■" * fraction + "□" * (20 - fraction) +
+                                  f"  {done}/{len(leaves)} activities complete", style="#74c5b2"))
+                if self.path["ascii_art"]:
+                    yield Static(Text(self.path["ascii_art"], no_wrap=True, overflow="ignore"))
+                yield Tree("Learning map · expand branches to explore", id="visual-tree")
+                for entry in [self.path, *self.nodes.values()]:
+                    if entry is not self.path and entry["ascii_art"]:
+                        with Collapsible(title=entry["title"] + " · artwork", collapsed=entry["id"] != self.selected):
+                            yield Static(Text(entry["ascii_art"], no_wrap=True, overflow="ignore"))
+                    if entry["mermaid"]:
+                        with Collapsible(title=entry["title"] + " · Mermaid source"):
+                            yield Static(Text(entry["mermaid"]))
+                    if entry["ascii_piece"]:
+                        yield Static(Text(f'Animated scene: {entry["ascii_piece"]} · available in HTML export', style="#8fa5bb"))
+                yield Static("The map and artwork work offline. HTML export renders Mermaid diagrams and animated web scenes.", classes="hint")
+            yield Button("Close", id="close-visual")
+
+    def on_mount(self):
+        tree = self.query_one(Tree)
+        by_uid = {n["uid"]: n for n in self.nodes.values()}
+
+        def walk(parent, branch):
+            for node_id in self.path_children.get(parent, []):
+                node, state = self.nodes[node_id], self.states[node_id]
+                label = Text(("□", "◧", "■")[state] + " ", style=COLORS[state])
+                label.append(activity_title(node))
+                label.append(" · " + node["kind"] + (" · optional" if node["optional"] else ""), style="#8fa5bb")
+                resource = self.resources.get(node["resource_uid"])
+                if resource:
+                    label.append(" · " + resource["title"], style="#a6dace")
+                required = [by_uid[uid]["title"] for uid in json.loads(node["requires"]) if uid in by_uid]
+                if required:
+                    label.append(" · After: " + ", ".join(required), style="#e5bc72")
+                child = branch.add(label, data=node_id, expand=False, allow_expand=bool(self.path_children.get(node_id)))
+                walk(node_id, child)
+
+        walk(None, tree.root)
+        tree.root.expand()
+        tree.focus(scroll_visible=False)
+
+    @on(Button.Pressed, "#close-visual")
+    def close_panel(self):
+        self.dismiss()
 
 
 class ReadingPanel(ModalScreen):
@@ -124,9 +191,10 @@ class LearningUI:
                 marker = "▸" if expandable and node_id in self.collapsed else "▾" if expandable else " "
                 text = Text(prefix + branch + marker + " ", style="#667d94")
                 text.append(("□", "◧", "■")[states[node_id]] + " ", style=COLORS[states[node_id]])
-                text.append(node["title"])
-                text.append("  " + node["kind"] + (" · optional" if node["optional"] else ""), style="#8fa5bb")
-                rows.append((node_id, [text]))
+                text.append(activity_title(node))
+                kind = Text(node["kind"] + ("\noptional" if node["optional"] else ""),
+                            style="#8fa5bb", justify="right")
+                rows.append((node_id, [text, kind]))
                 if expandable and node_id not in self.collapsed:
                     walk(node_id, prefix + ("   " if n == len(descendants)-1 else "│  "))
         walk()
@@ -147,11 +215,6 @@ class LearningUI:
             current = nodes.get(current["parent_id"])
         return list(dict.fromkeys(missing))
 
-    @on(DataTable.RowHighlighted, "#syllabus")
-    def highlighted_activity(self):
-        if self.mode == "paths":
-            self.render_activity_info()
-
     def render_activity_info(self):
         node_id = self.row_id(self.query_one("#syllabus", DataTable))
         node = self.learning_nodes.get(node_id)
@@ -159,6 +222,10 @@ class LearningUI:
             self.query_one("#learning-info", Static).update("Enter: expand · Space: mark · p: plan · c: add child · i: details")
             return
         info = Text()
+        if node["resource_uid"]:
+            resource = self.store.rows("SELECT title FROM resources WHERE uid=?", (node["resource_uid"],))
+            if resource:
+                info.append("Source: " + resource[0]["title"] + "\n", style="#a6dace")
         missing = self.unmet_prerequisites(node_id)
         if missing:
             info.append("Suggested first: " + ", ".join(missing) + "\n", style="#e5bc72")
@@ -368,7 +435,7 @@ class LearningUI:
                     content += "\n\nSuggested first: " + ", ".join(missing)
                 content += "\n\n" + node["ascii_art"]
                 if node["mermaid"]:
-                    content += "\n\nMermaid source (v opens the rendered preview)\n" + node["mermaid"]
+                    content += "\n\nMermaid source (HTML export renders this diagram)\n" + node["mermaid"]
                 self.push_screen(ReadingPanel(node["title"], content.strip() or "No additional notes."))
             else:
                 path = self.store.rows("SELECT * FROM paths WHERE id=?", (self.path_id,))[0]
@@ -377,8 +444,5 @@ class LearningUI:
     def action_visual(self):
         if self.mode != "paths" or not self.path_id:
             return
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".html", prefix="tuido-syllabus-", delete=False) as output:
-            output.write(render_path_html(self.store, self.path_id))
-            preview = Path(output.name)
-        opened = webbrowser.open(preview.as_uri())
-        self.status(f'Preview {"opened" if opened else "saved"}: {preview}')
+        selected = self.row_id(self.query_one("#syllabus", DataTable))
+        self.push_screen(VisualPanel(self.store, self.path_id, selected))

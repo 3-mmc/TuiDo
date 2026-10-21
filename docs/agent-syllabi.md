@@ -106,8 +106,9 @@ copy the SQLite file while the app is closed.
 ## Visuals and skills
 
 `mermaid` holds diagram source on either the syllabus or an activity. Press `v`
-in Paths to open a local HTML preview containing the syllabus, an automatically
-generated dependency map, and attached diagrams. Or export it explicitly:
+in Paths to open an in-app learning map with progress, sources, prerequisites,
+and plain artwork. Attached diagram source can be expanded in that view. For
+rendered Mermaid diagrams and animated web scenes, export HTML explicitly:
 
 ```sh
 uv run tuido --render-syllabus my-path-id --output syllabus.html

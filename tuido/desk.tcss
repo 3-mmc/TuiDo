@@ -49,7 +49,10 @@ Footer > .footer--key { background: #31566b; color: #e4f4f0; }
 .compact #desk { padding: 0; }
 .compact .panel { padding: 0; }
 .compact #chapter-actions { layout: vertical; height: 6; }
-Form, Help { align: center middle; background: #08111bb0; }
+Form, Help, ReadingPanel, ImportPreview, VisualPanel { align: center middle; background: #08111bb0; }
+#visual-dialog { width: 90%; height: 90%; background: #142437; border: round #83b8ce; padding: 1 2; }
+#visual-dialog Static { height: auto; margin-bottom: 1; }
+#visual-tree { height: auto; min-height: 5; margin: 1 0; background: transparent; }
 #dialog { width: 64; max-width: 95%; height: auto; max-height: 90%; background: #142437; border: round #83b8ce; padding: 1 2; }
 .dialog-title { text-style: bold; color: #a6dace; margin-bottom: 1; }
 #dialog Input { margin: 0 0 1 0; background: #101d2b; border: tall #334d65; }
