@@ -147,6 +147,8 @@ class Store(LearningStore):
         column = "text" if table == "bullets" else "title"
         with self.change():
             self.db.execute(f"UPDATE {table} SET {column}=? WHERE id=?", (title, item_id))
+            if table == "books":
+                self.db.execute("UPDATE resources SET title=? WHERE book_id=?", (title, item_id))
 
     def export(self):
         return json.dumps({"version": 2, **{t: self.rows(f"SELECT * FROM {t}") for t in

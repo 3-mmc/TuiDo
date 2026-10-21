@@ -2,6 +2,7 @@
 
 from datetime import date
 import json
+import re
 
 from rich.text import Text
 from textual import on
@@ -16,10 +17,16 @@ COLORS = ("#667d94", "#e5bc72", "#74c5b2")
 
 
 def activity_title(node):
-    """Keep imported action prefixes out of the title when Type already shows them."""
+    """Show optionality once; keep action types in their own column."""
     title = node["title"]
+    if node["optional"]:
+        title = re.sub(r"^optional\s*:\s*", "", title, flags=re.IGNORECASE)
     prefix = node["kind"] + ":"
-    return title[len(prefix):].lstrip() if title.lower().startswith(prefix) else title
+    if title.lower().startswith(prefix):
+        title = title[len(prefix):].lstrip()
+    if node["optional"] and not re.match(r"optional\b", title, flags=re.IGNORECASE):
+        title = "Optional: " + title
+    return title
 
 
 class VisualPanel(ModalScreen):
@@ -67,7 +74,7 @@ class VisualPanel(ModalScreen):
                 node, state = self.nodes[node_id], self.states[node_id]
                 label = Text(("□", "◧", "■")[state] + " ", style=COLORS[state])
                 label.append(activity_title(node))
-                label.append(" · " + node["kind"] + (" · optional" if node["optional"] else ""), style="#8fa5bb")
+                label.append(" · " + node["kind"], style="#8fa5bb")
                 resource = self.resources.get(node["resource_uid"])
                 if resource:
                     label.append(" · " + resource["title"], style="#a6dace")
@@ -192,8 +199,7 @@ class LearningUI:
                 text = Text(prefix + branch + marker + " ", style="#667d94")
                 text.append(("□", "◧", "■")[states[node_id]] + " ", style=COLORS[states[node_id]])
                 text.append(activity_title(node))
-                kind = Text(node["kind"] + ("\noptional" if node["optional"] else ""),
-                            style="#8fa5bb", justify="right")
+                kind = Text(node["kind"], style="#8fa5bb", justify="right")
                 rows.append((node_id, [text, kind]))
                 if expandable and node_id not in self.collapsed:
                     walk(node_id, prefix + ("   " if n == len(descendants)-1 else "│  "))

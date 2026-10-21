@@ -28,12 +28,19 @@ class WrappingTable(DataTable):
 class Form(ModalScreen[dict | None]):
     BINDINGS = [("escape", "cancel", "Cancel")]
 
-    def __init__(self, title, fields, *, textbook=False, habits=None, choices=None, validator=None):
+    def __init__(self, title, fields, *, textbook=False, habits=None, choices=None, validator=None, select_title=False):
         super().__init__()
         self.heading, self.fields = title, fields
         self.textbook, self.habits = textbook, habits
         self.choices = choices or {}
         self.validator = validator
+        self.select_title = select_title
+
+    def on_mount(self):
+        if self.select_title:
+            field = self.query_one("#title", Input)
+            field.focus()
+            field.action_select_all()
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="dialog"):
@@ -113,7 +120,7 @@ class Help(ModalScreen):
                 "e                 Toggle textbook exercises\n"
                 "p                 Put the selected chapter in Today\n"
                 "a                 Add to the focused column\n"
-                "r                 Rename the selected item\n"
+                "r / Rename button Rename the selected item in that pane\n"
                 "Delete            Delete selected item (Ctrl+Z to undo)\n"
                 "+ / -             Add / subtract one habit unit today\n"
                 "Ctrl+J            Jot a task (prefix '- ' for a note)\n"
@@ -164,7 +171,7 @@ class Tuido(LearningUI, App):
         Binding("space", "advance", "Mark", show=False),
         Binding("e", "exercises", "Exercises", show=False),
         Binding("p", "plan", "Plan", show=False),
-        Binding("r", "rename", "Rename", show=False),
+        Binding("r", "rename", "Rename"),
         Binding("delete", "delete", "Delete", show=False),
         Binding("plus,equals", "increment", "+ Unit", show=False),
         Binding("minus", "decrement", "− Unit", show=False),
@@ -203,13 +210,17 @@ class Tuido(LearningUI, App):
             yield Button("Today", id="show-today")
         with Horizontal(id="desk"):
             with Vertical(id="library", classes="panel"):
-                yield Label("Books", id="library-title", classes="heading")
+                with Horizontal(classes="panel-heading"):
+                    yield Label("Books", id="library-title", classes="heading")
+                    yield Button("Rename", id="rename-item", disabled=True)
                 yield WrappingTable(id="items", cursor_type="row", show_header=False, show_row_labels=False)
                 yield Static("", id="library-empty", classes="empty")
                 yield Button("+ Book", id="add-item")
                 yield Button("Import syllabus", id="import-syllabus")
             with Vertical(id="contents", classes="panel"):
-                yield Label("Choose a book", id="detail-title", classes="heading")
+                with Horizontal(classes="panel-heading"):
+                    yield Label("Choose a book", id="detail-title", classes="heading")
+                    yield Button("Rename", id="rename-detail", disabled=True)
                 yield Static("", id="progress")
                 yield DataTable(id="chapters", cursor_type="row", show_row_labels=False)
                 yield WrappingTable(id="syllabus", cursor_type="row", show_header=False, show_row_labels=False)
@@ -235,7 +246,9 @@ class Tuido(LearningUI, App):
                     yield Button("+ Chapter", id="add-chapter")
                     yield Button("Plan today", id="plan-chapter")
             with Vertical(id="journal", classes="panel"):
-                yield Label("Today", id="journal-title", classes="heading")
+                with Horizontal(classes="panel-heading"):
+                    yield Label("Today", id="journal-title", classes="heading")
+                    yield Button("Rename", id="rename-bullet", disabled=True)
                 with Horizontal(id="journal-nav"):
                     yield Button("‹", id="prev-day")
                     yield Button("Today", id="current-day")
@@ -309,7 +322,22 @@ class Tuido(LearningUI, App):
             ids = [item_id for item_id, _ in rows]
             if ids:
                 table.move_cursor(row=ids.index(selected) if selected in ids else 0)
+        self.refresh_rename_controls()
         return self.row_id(table)
+
+    def detail_selection(self):
+        return {"paths": "syllabus", "books": "chapters", "habits": "items", "skills": "items"}[self.mode]
+
+    def refresh_rename_controls(self):
+        names = {"paths": "path", "books": "book", "habits": "habit", "skills": "skill"}
+        for button_id, selector, name in (
+            ("rename-item", "items", names[self.mode]),
+            ("rename-detail", self.detail_selection(), {"paths": "activity or module", "books": "chapter"}.get(self.mode, names[self.mode])),
+            ("rename-bullet", "bullets", "journal task or note"),
+        ):
+            button = self.query_one(f"#{button_id}", Button)
+            button.disabled = not self.query_one(f"#{selector}", DataTable).row_count
+            button.tooltip = f"Rename the selected {name} · shortcut: r · Ctrl+Z undoes changes"
 
     def status(self, message):
         self.query_one("#status", Static).update(Text(message, style="#b7c8d9"))
@@ -510,6 +538,9 @@ class Tuido(LearningUI, App):
                    "next-day": self.action_next_day, "current-day": self.current_day,
                    "add-unit": self.action_increment, "subtract-unit": self.action_decrement,
                    "log-amount": self.log_amount}
+        actions.update({"rename-item": lambda: self.action_rename("items"),
+                        "rename-detail": lambda: self.action_rename(self.detail_selection()),
+                        "rename-bullet": lambda: self.action_rename("bullets")})
         if action := actions.get(event.button.id):
             action()
 
@@ -655,23 +686,35 @@ class Tuido(LearningUI, App):
                 self.increment(values["daily"])
         self.push_screen(Form("Log an amount today", [("daily", "Units to add", "1", False)]), save)
 
-    def selected_record(self):
-        focused = getattr(self.focused, "id", None)
+    def selected_record(self, selector=None):
+        focused = selector or getattr(self.focused, "id", None)
         table = {"items": self.mode, "chapters": "chapters", "bullets": "bullets", "syllabus": "activities"}.get(focused)
         if table:
             return table, self.row_id(self.query_one(f"#{focused}", DataTable))
         return None, None
 
-    def action_rename(self):
-        table, item_id = self.selected_record()
+    def action_rename(self, selector=None):
+        if selector is None and self.focused is not None:
+            # Buttons and other pane controls take focus when clicked. Resolve
+            # their pane rather than silently losing the selected record.
+            for pane, target in (("library", "items"), ("contents", self.detail_selection()), ("journal", "bullets")):
+                if self.query_one(f"#{pane}") in self.focused.ancestors:
+                    selector = target
+                    break
+        table, item_id = self.selected_record(selector)
         if not item_id:
+            self.status("Select an item in a pane to rename it.")
             return
         row = self.store.rows(f"SELECT * FROM {table} WHERE id=?", (item_id,))[0]
+        name = {"paths": "path", "activities": "activity", "books": "book", "chapters": "chapter",
+                "habits": "habit", "skills": "skill", "bullets": "task or note"}[table]
         def save(values):
             if values:
                 self.store.rename(table, item_id, values["title"])
                 self.refresh_desk()
-        self.push_screen(Form("Edit text", [("title", "Text", row.get("title", row.get("text", "")), False)]), save)
+                self.status(f"Renamed {name}. Ctrl+Z undoes this change.")
+        self.push_screen(Form(f"Rename {name}", [("title", "New name" if table != "bullets" else "Task or note text",
+                                                 row.get("title", row.get("text", "")), False)], select_title=True), save)
 
     def action_delete(self):
         table, item_id = self.selected_record()

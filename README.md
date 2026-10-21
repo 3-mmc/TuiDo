@@ -118,7 +118,7 @@ Magic player's reduced-motion behavior. No Node dependency is required by TuiDo.
 | `n` | Continue the next ready required activity |
 | `p` | Plan selected activity or chapter for today |
 | `i` / `v` | Inspect notes / open in-app learning map |
-| `r` | Edit selected item's text |
+| `r` / Rename button | Rename the selected item in its pane |
 | Delete | Delete item, or archive activity; Ctrl+Z restores it |
 | `e` | Toggle textbook exercises in Library |
 | `+` / `-` | Add / subtract one habit unit today |
@@ -130,6 +130,11 @@ Magic player's reduced-motion behavior. No Node dependency is required by TuiDo.
 | Ctrl+Z | Undo up to 50 changes in the current session |
 | `?` | Help |
 | Ctrl+Q | Quit |
+
+Select an item and click **Rename** in that pane's heading, or press **r**.
+This works for paths, modules, activities, books, chapters, habits, skills, and
+journal tasks or notes. The current name is selected for replacement: Enter saves,
+Escape cancels, and Ctrl+Z undoes a rename. Progress and linked records are preserved.
 
 Reopening a linked daily task keeps its recorded progress. Rechecking it does not
 log habit credit twice. Use Undo to reverse the entire linked action. Linking a

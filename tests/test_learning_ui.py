@@ -2,11 +2,80 @@ from copy import deepcopy
 from datetime import date
 import json
 
-from textual.widgets import DataTable, Input, Select, Static, TextArea, Tree
+from textual.widgets import Button, DataTable, Input, Select, Static, TextArea, Tree
 
 from tuido.app import Tuido
 from tuido.demo import DEMO_SYLLABUS
 from tuido.store import Store
+
+
+async def test_rename_buttons_target_each_pane_preserve_links_and_support_undo():
+    store = Store(":memory:")
+    path_id = store.import_syllabus(deepcopy(DEMO_SYLLABUS))
+    habit_id = store.add_habit("Practice")
+    bullet_id = store.add_bullet(date.today().isoformat(), "Today's task")
+    module_id = store.rows("SELECT id FROM activities WHERE kind='module' ORDER BY id")[0]["id"]
+    activity = store.rows("SELECT * FROM activities WHERE uid='question-reading'")[0]
+    store.cycle_activity(activity["id"])
+    skill_id = store.rows("SELECT id FROM skills ORDER BY id")[0]["id"]
+    store.save_skill(skill_id, 2, "Existing evidence")
+    book_id = store.rows("SELECT book_id FROM chapters WHERE id=?", (activity["chapter_id"],))[0]["book_id"]
+    app = Tuido(store)
+    cases = [
+        ("f1", "rename-item", "items", "paths", path_id, "title"),
+        ("f1", "rename-detail", "syllabus", "activities", module_id, "title"),
+        ("f1", "rename-detail", "syllabus", "activities", activity["id"], "title"),
+        ("f2", "rename-item", "items", "books", book_id, "title"),
+        ("f2", "rename-detail", "chapters", "chapters", activity["chapter_id"], "title"),
+        ("f3", "rename-item", "items", "habits", habit_id, "title"),
+        ("f4", "rename-detail", "items", "skills", skill_id, "title"),
+        ("f1", "rename-bullet", "bullets", "bullets", bullet_id, "text"),
+    ]
+    async with app.run_test(size=(140, 45)) as pilot:
+        for mode, button, selector, table_name, item_id, column in cases:
+            await pilot.press(mode)
+            table = app.query_one(f"#{selector}", DataTable)
+            table.move_cursor(row=table.get_row_index(str(item_id)))
+            await pilot.pause()
+            before = store.export()
+            old = store.rows(f"SELECT * FROM {table_name} WHERE id=?", (item_id,))[0]
+            assert not app.query_one(f"#{button}", Button).disabled
+            await pilot.click(f"#{button}")
+            field = app.screen.query_one("#title", Input)
+            assert field.value == old[column]
+            assert (field.selection.start, field.selection.end) == (0, len(old[column]))
+            field.value = "Renamed " + table_name
+            await pilot.press("enter")
+            after = store.rows(f"SELECT * FROM {table_name} WHERE id=?", (item_id,))[0]
+            assert after == {**old, column: "Renamed " + table_name}
+            if table_name == "books":
+                assert all(r["title"] == after["title"] for r in store.rows("SELECT title FROM resources WHERE book_id=?", (item_id,)))
+            await pilot.press("ctrl+z")
+            assert store.export() == before
+    store.close()
+
+
+async def test_keyboard_rename_cancel_and_empty_name_validation():
+    store = Store(":memory:")
+    path_id = store.add_path("Original path")
+    app = Tuido(store)
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.press("r")
+        app.screen.query_one("#title", Input).value = "   "
+        await pilot.press("enter")
+        assert app.screen.query_one("#form-error", Static).render().plain
+        assert store.rows("SELECT title FROM paths WHERE id=?", (path_id,))[0]["title"] == "Original path"
+        app.screen.query_one("#title", Input).value = "Cancelled name"
+        await pilot.press("escape")
+        assert store.rows("SELECT title FROM paths WHERE id=?", (path_id,))[0]["title"] == "Original path"
+        assert app.query_one("#rename-detail", Button).disabled
+        # r also works from a pane button, after focus leaves the table.
+        app.query_one("#rename-item").focus()
+        await pilot.press("r")
+        app.screen.query_one("#title", Input).value = "Updated path"
+        await pilot.press("enter")
+        assert store.rows("SELECT title FROM paths WHERE id=?", (path_id,))[0]["title"] == "Updated path"
+    store.close()
 
 
 async def test_two_book_sources_types_and_layout_after_switching():
@@ -20,9 +89,9 @@ async def test_two_book_sources_types_and_layout_after_switching():
                 {"id": "stress", "title": "Chapter 1: Stress and strain"}]},
         ],
         "modules": [{"id": "foundations", "title": "Earth systems", "kind": "module", "children": [
-            {"id": "earth-reading", "title": "Read: System Erde", "kind": "read",
+            {"id": "earth-reading", "title": "Optional: Read: System Erde", "kind": "read", "optional": True,
              "resource": "general", "chapter": "earth"},
-            {"id": "plate-exercises", "title": "Plate boundary problems", "kind": "exercise",
+            {"id": "plate-exercises", "title": "Plate boundary problems", "kind": "exercise", "optional": True,
              "resource": "general", "chapter": "plates"},
             {"id": "stress-reading", "title": "Read: Stress and strain", "kind": "read",
              "resource": "structural", "chapter": "stress"},
@@ -32,11 +101,15 @@ async def test_two_book_sources_types_and_layout_after_switching():
     store.import_syllabus(syllabus)
     app = Tuido(store)
     async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
         table = app.query_one("#syllabus", DataTable)
         for node in app.learning_nodes.values():
             title, kind = table.get_row(str(node["id"]))
-            assert kind.plain == node["kind"] + ("\noptional" if node["optional"] else "")
+            assert kind.plain == node["kind"]
             assert kind.justify == "right"
+            if node["optional"]:
+                assert title.plain.lower().count("optional") == 1
+                assert table.ordered_rows[table.get_row_index(str(node["id"]))].height == 1
             if node["resource_uid"]:
                 source = next(r for r in syllabus["resources"] if r["id"] == node["resource_uid"])
                 assert source["title"] not in title.plain

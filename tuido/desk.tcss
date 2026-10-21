@@ -13,6 +13,10 @@ Screen { background: #101d2b; color: #dbe6ef; }
 #contents { width: 1fr; min-width: 25; }
 #journal { width: 34; min-width: 25; margin-left: 1; border: round #66728c; }
 .heading { height: auto; min-height: 2; padding: 1 0 0 0; text-style: bold; color: #c7dbea; }
+.panel-heading { height: auto; min-height: 2; }
+.panel-heading .heading { width: 1fr; }
+.panel-heading Button { width: 8; min-width: 8; height: 1; padding: 0; margin: 1 0 0 0; }
+.panel-heading Button:focus { border: none; background: #365e78; }
 DataTable { background: transparent; height: 1fr; margin-top: 1; scrollbar-size: 1 1; }
 DataTable > .datatable--header { background: #1b3147; color: #8fa5bb; text-style: none; }
 DataTable > .datatable--cursor { background: #294b65; color: #f0f6fc; }
