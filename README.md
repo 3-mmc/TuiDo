@@ -47,6 +47,8 @@ For the virtual environment already in this workspace:
 - **Skills:** milestones with suggested evidence drawn from syllabus activities.
   Choose Not yet, Explored, Practised, or Demonstrated. Demonstrated requires
   recorded evidence; finishing readings does not automatically claim mastery.
+  A seed grows into a flower across the four assessments, with a text label and
+  level markers alongside it.
 - **Today:** quick tasks and notes in a persistent sidepane. Tomorrow starts a new
   page; older pages remain retrievable. Carry unfinished tasks forward explicitly.
   Plan a syllabus activity or chapter into Today and check it off there to update
@@ -92,6 +94,8 @@ progress, book sources, prerequisites, and ASCII artwork. Escape returns to your
 path. Press **i** to inspect notes and resource links. Attached Mermaid source is
 available inside the visual view; export HTML for rendered Mermaid diagrams and
 animated web scenes.
+Plain artwork keeps its spacing in both views. Focus wide artwork with Tab and
+use Left/Right to scroll across it on a narrow terminal.
 
 ```sh
 uv run tuido --render-syllabus my-path-id --output syllabus.html

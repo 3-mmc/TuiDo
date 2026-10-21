@@ -6,7 +6,7 @@ import re
 
 from rich.text import Text
 from textual import on
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, DataTable, Label, Static, Tree
 
@@ -14,6 +14,26 @@ from .syllabus import KINDS, SyllabusError, load_syllabus
 
 LEVELS = ("Not yet", "Explored", "Practised", "Demonstrated")
 COLORS = ("#667d94", "#e5bc72", "#74c5b2")
+SKILL_COLORS = ("#8fa5bb", "#e5bc72", "#a6dace", "#b7adc9")
+# A seed, a sprout, a growing plant, and a flower. Keep the footprint fixed
+# so changing assessments doesn't move the evidence or controls around.
+SKILL_ART = (
+    "         \n         \n         \n    .    \n _______ \n \\_____/ ",
+    "         \n         \n   \\|/   \n    |    \n ___|___ \n \\_____/ ",
+    "         \n    |    \n  \\ | /  \n   \\|/   \n ___|___ \n \\_____/ ",
+    "   \\|/   \n  --*--  \n   /|\\   \n   \\|/   \n ___|___ \n \\_____/ ",
+)
+
+
+class AsciiArt(HorizontalScroll):
+    """Preserve artwork's spacing and let narrow terminals pan across it."""
+
+    def __init__(self, artwork):
+        super().__init__(classes="ascii-art")
+        self.artwork = artwork
+
+    def compose(self):
+        yield Static(Text(self.artwork.expandtabs(4), no_wrap=True, overflow="ignore"), markup=False)
 
 
 def activity_title(node):
@@ -51,12 +71,12 @@ class VisualPanel(ModalScreen):
                 yield Static(Text("■" * fraction + "□" * (20 - fraction) +
                                   f"  {done}/{len(leaves)} activities complete", style="#74c5b2"))
                 if self.path["ascii_art"]:
-                    yield Static(Text(self.path["ascii_art"], no_wrap=True, overflow="ignore"))
+                    yield AsciiArt(self.path["ascii_art"])
                 yield Tree("Learning map · expand branches to explore", id="visual-tree")
                 for entry in [self.path, *self.nodes.values()]:
                     if entry is not self.path and entry["ascii_art"]:
                         with Collapsible(title=entry["title"] + " · artwork", collapsed=entry["id"] != self.selected):
-                            yield Static(Text(entry["ascii_art"], no_wrap=True, overflow="ignore"))
+                            yield AsciiArt(entry["ascii_art"])
                     if entry["mermaid"]:
                         with Collapsible(title=entry["title"] + " · Mermaid source"):
                             yield Static(Text(entry["mermaid"]))
@@ -96,14 +116,17 @@ class VisualPanel(ModalScreen):
 class ReadingPanel(ModalScreen):
     BINDINGS = [("escape", "dismiss", "Close")]
 
-    def __init__(self, title, text):
+    def __init__(self, title, text, *, artwork=""):
         super().__init__()
         self.heading, self.text = title, text
+        self.artwork = artwork
 
     def compose(self):
         with VerticalScroll(id="dialog"):
             yield Label(Text(self.heading), classes="dialog-title")
             yield Static(Text(self.text))
+            if self.artwork:
+                yield AsciiArt(self.artwork)
             yield Button("Close", id="close-reading")
 
     @on(Button.Pressed)
@@ -166,7 +189,9 @@ class LearningUI:
             self.path_id = self.fill("#items", rows, self.path_id)
         else:
             items = self.store.rows("SELECT * FROM skills WHERE active=1 ORDER BY level DESC,id")
-            rows = [(s["id"], [Text(s["title"] + "\n") + Text("■ " * s["level"] + "□ " * (3-s["level"]), style="#b7adc9")]) for s in items]
+            rows = [(s["id"], [Text(s["title"] + "\n") + Text(
+                "■ " * s["level"] + "□ " * (3-s["level"]) + " · " + LEVELS[s["level"]],
+                style=SKILL_COLORS[s["level"]])]) for s in items]
             self.skill_id = self.fill("#items", rows, self.skill_id)
         self.query_one("#items").display = bool(items)
         self.query_one("#library-empty").display = not items
@@ -396,10 +421,14 @@ class LearningUI:
         path = self.store.rows("SELECT title FROM paths WHERE id=?", (skill["path_id"],))[0]
         _, _, states = self.store.learning_snapshot(skill["path_id"])
         criteria = self.store.rows("SELECT a.* FROM skill_criteria sc JOIN activities a ON a.id=sc.activity_id WHERE sc.skill_id=? AND a.active=1 ORDER BY a.id", (skill["id"],))
-        badge = ("   .---.\n  /  *  \\\n  \\     /\n   '---'\n    / \\\n   /___\\\n" if skill["level"] == 3 else "   .---.\n  /  .  \\\n  \\     /\n   '---'\n")
-        text = Text(badge, style="#b7adc9")
-        text.append("\n" + LEVELS[skill["level"]] + "\n", style="#a6dace")
-        text.append(path["title"] + "\n\nSuggested evidence\n", style="#8fa5bb")
+        level = skill["level"]
+        self.query_one("#skill-art", Static).update(Text(
+            SKILL_ART[level], style=SKILL_COLORS[level], no_wrap=True, overflow="ignore"))
+        assessment = Text(LEVELS[level] + "\n", style=SKILL_COLORS[level])
+        assessment.append("■ " * level + "□ " * (3 - level) + f"  {level}/3\n", style=SKILL_COLORS[level])
+        assessment.append(path["title"], style="#8fa5bb")
+        self.query_one("#skill-assessment", Static).update(assessment)
+        text = Text("Suggested evidence\n", style="#8fa5bb")
         for criterion in criteria:
             state = states.get(criterion["id"], 0)
             text.append(("□", "◧", "■")[state] + " " + criterion["title"] + "\n", style=COLORS[state])
@@ -439,13 +468,12 @@ class LearningUI:
                 missing = self.unmet_prerequisites(node_id)
                 if missing:
                     content += "\n\nSuggested first: " + ", ".join(missing)
-                content += "\n\n" + node["ascii_art"]
                 if node["mermaid"]:
                     content += "\n\nMermaid source (HTML export renders this diagram)\n" + node["mermaid"]
-                self.push_screen(ReadingPanel(node["title"], content.strip() or "No additional notes."))
+                self.push_screen(ReadingPanel(node["title"], content.strip() or "No additional notes.", artwork=node["ascii_art"]))
             else:
                 path = self.store.rows("SELECT * FROM paths WHERE id=?", (self.path_id,))[0]
-                self.push_screen(ReadingPanel(path["title"], path["description"] + "\n\n" + path["ascii_art"]))
+                self.push_screen(ReadingPanel(path["title"], path["description"], artwork=path["ascii_art"]))
 
     def action_visual(self):
         if self.mode != "paths" or not self.path_id:

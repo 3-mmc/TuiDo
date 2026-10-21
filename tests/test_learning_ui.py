@@ -6,6 +6,7 @@ from textual.widgets import Button, DataTable, Input, Select, Static, TextArea, 
 
 from tuido.app import Tuido
 from tuido.demo import DEMO_SYLLABUS
+from tuido.learning_ui import AsciiArt, LEVELS, SKILL_ART
 from tuido.store import Store
 
 
@@ -232,6 +233,57 @@ async def test_skill_evidence_validation_and_recording():
         await pilot.pause()
         assert store.rows("SELECT MAX(level) AS level FROM skills")[0]["level"] == 3
         assert app.query_one("#skills-detail").display
+    store.close()
+
+
+async def test_skill_graphics_follow_assessment_and_fit_narrow_panes():
+    store = Store(":memory:")
+    store.import_syllabus(deepcopy(DEMO_SYLLABUS))
+    skill_id = store.rows("SELECT id FROM skills ORDER BY id")[0]["id"]
+    app = Tuido(store)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("f4")
+        for level in range(4):
+            store.save_skill(skill_id, level, "My solution [with brackets]")
+            app.refresh_desk()
+            await pilot.pause()
+            assert app.query_one("#skill-art", Static).render().plain == SKILL_ART[level]
+            assert LEVELS[level] in app.query_one("#skill-assessment", Static).render().plain
+            assert "My solution [with brackets]" in app.query_one("#skill-description", Static).render().plain
+        for width in (80, 60, 140):
+            await pilot.resize_terminal(width, 30)
+            await pilot.pause()
+            art = app.query_one("#skill-art", Static)
+            assessment = app.query_one("#skill-assessment", Static)
+            assert art.content_size.height == 6
+            assert art.region.right < assessment.region.x
+            assert assessment.region.right <= app.query_one("#contents").content_region.right
+            assert assessment.content_size.width >= len("Demonstrated")
+    store.close()
+
+
+async def test_wide_ascii_art_preserves_lines_and_can_scroll_in_both_views():
+    store = Store(":memory:")
+    syllabus = deepcopy(DEMO_SYLLABUS)
+    artwork = "[literal]" + "-" * 140 + "+\n\t|    /\\    |"
+    syllabus["ascii"] = artwork
+    store.import_syllabus(syllabus)
+    app = Tuido(store)
+    async with app.run_test(size=(60, 30)) as pilot:
+        for key in ("v", "i"):
+            await pilot.press(key)
+            await pilot.pause()
+            art = app.screen.query_one(AsciiArt)
+            content = art.query_one(Static)
+            assert content.render().plain == artwork.expandtabs(4)
+            assert content.content_size.height == 2
+            assert art.max_scroll_x > 0
+            assert art.region.right <= 60
+            art.focus()
+            await pilot.press("right")
+            await pilot.pause()
+            assert art.scroll_x > 0
+            await pilot.press("escape")
     store.close()
 
 

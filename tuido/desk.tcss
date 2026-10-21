@@ -25,6 +25,9 @@ DataTable:focus > .datatable--cursor { background: #365e78; }
 #progress { height: auto; max-height: 7; padding: 1 0; }
 #habit-detail { height: 1fr; padding-top: 1; }
 #skills-detail { height: 1fr; padding-top: 1; }
+#skill-header { height: auto; min-height: 6; margin-bottom: 1; }
+#skill-art { width: 9; height: 6; margin-right: 2; }
+#skill-assessment { width: 1fr; height: auto; padding-top: 1; }
 #skill-description { height: auto; margin-bottom: 1; }
 #learning-info { max-height: 5; }
 #learning-actions Button { min-width: 8; }
@@ -56,6 +59,9 @@ Footer > .footer--key { background: #31566b; color: #e4f4f0; }
 Form, Help, ReadingPanel, ImportPreview, VisualPanel { align: center middle; background: #08111bb0; }
 #visual-dialog { width: 90%; height: 90%; background: #142437; border: round #83b8ce; padding: 1 2; }
 #visual-dialog Static { height: auto; margin-bottom: 1; }
+.ascii-art { height: auto; width: 100%; margin: 1 0; scrollbar-size: 1 1; }
+.ascii-art:focus { background: #1b3147; }
+.ascii-art Static { width: auto; height: auto; margin: 0; color: #a6dace; }
 #visual-tree { height: auto; min-height: 5; margin: 1 0; background: transparent; }
 #dialog { width: 64; max-width: 95%; height: auto; max-height: 90%; background: #142437; border: round #83b8ce; padding: 1 2; }
 .dialog-title { text-style: bold; color: #a6dace; margin-bottom: 1; }

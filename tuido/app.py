@@ -225,6 +225,9 @@ class Tuido(LearningUI, App):
                 yield DataTable(id="chapters", cursor_type="row", show_row_labels=False)
                 yield WrappingTable(id="syllabus", cursor_type="row", show_header=False, show_row_labels=False)
                 with VerticalScroll(id="skills-detail"):
+                    with Horizontal(id="skill-header"):
+                        yield Static("", id="skill-art")
+                        yield Static("", id="skill-assessment")
                     yield Static("", id="skill-description")
                     yield Button("Record progress & evidence", id="edit-skill")
                 with VerticalScroll(id="habit-detail"):
