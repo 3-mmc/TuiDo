@@ -155,3 +155,185 @@ async def test_midnight_starts_a_fresh_page_without_moving_tasks(monkeypatch):
         assert app.query_one("#bullets", DataTable).row_count == 0
         assert store.rows("SELECT day FROM bullets")[0]["day"] == today.isoformat()
     store.close()
+
+
+async def test_habits_edit_other_dates_and_separate_future_plans():
+    from textual.widgets import Static
+    store = Store(":memory:")
+    habit = store.add_habit("DJing", daily_goal=3, goal_period="week")
+    app = Tuido(store)
+    async with app.run_test(size=(140, 48)) as pilot:
+        await pilot.press("f3", "ctrl+left", "plus")
+        past = date.today() - timedelta(days=1)
+        assert store.habit_counts(habit)[past.isoformat()] == 1
+        await pilot.click("#set-amount")
+        app.screen.query_one("#amount", Input).value = "0"
+        await pilot.click("#save")
+        await pilot.pause()
+        assert store.habit_counts(habit)[past.isoformat()] == 0
+        app.current_day()
+        await pilot.press("ctrl+right", "plus")
+        future = date.today() + timedelta(days=1)
+        assert app.journal_day == future
+        assert store.habit_counts(habit)[future.isoformat()] == 1
+        summary = str(app.query_one("#habit-summary", Static).render())
+        assert "Planned" in summary and "0 / 3 sessions; 1 planned" in summary
+        await pilot.click("#habit-date")
+        app.screen.query_one("#day", Input).value = "2026-01-01"
+        await pilot.click("#save")
+        await pilot.pause()
+        assert app.journal_day == date(2026, 1, 1)
+    store.close()
+
+
+async def test_create_and_edit_weekly_child_habit():
+    store = Store(":memory:")
+    parent = store.add_habit("Creative")
+    app = Tuido(store)
+    async with app.run_test(size=(140, 55)) as pilot:
+        await pilot.press("f3", "a")
+        app.screen.query_one("#title", Input).value = "DJing"
+        app.screen.query_one("#daily", Input).value = "3"
+        app.screen.query_one("#goal-period", Select).value = "week"
+        app.screen.query_one("#parent", Select).value = parent
+        await pilot.click("#save")
+        await pilot.pause()
+        child = app.habit_id
+        assert child != parent
+        await pilot.press("plus")
+        assert store.habit_counts(parent)[date.today().isoformat()] == 1
+        await pilot.click("#edit-habit")
+        app.screen.query_one("#daily", Input).value = "4"
+        await pilot.click("#save")
+        await pilot.pause()
+        assert store.rows("SELECT daily_goal,goal_period,parent_id FROM habits WHERE id=?", (child,))[0] == {"daily_goal": 4, "goal_period": "week", "parent_id": parent}
+    store.close()
+
+
+async def test_habit_controls_and_form_save_fit_small_terminal():
+    from textual.widgets import Button
+    store = Store(":memory:")
+    store.add_habit("Creative")
+    app = Tuido(store)
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.press("f3")
+        assert not app.query_one("#journal").display
+        nav = app.query_one("#habit-nav").region
+        assert nav.right <= app.query_one("#contents").region.right
+        await pilot.click("#habit-next")
+        assert app.journal_day == date.today() + timedelta(days=1)
+        app.habit_form(edit=True)
+        await pilot.pause()
+        save = app.screen.query_one("#save", Button)
+        assert save.region.bottom < 30
+        await pilot.click("#save")
+        await pilot.pause()
+        assert app.screen is app.screen_stack[0]
+    store.close()
+
+
+async def test_weekly_goal_hides_daily_schedule_and_ignores_blank_days():
+    from textual.widgets import Label, Static
+    store = Store(":memory:")
+    app = Tuido(store)
+    async with app.run_test(size=(100, 35)) as pilot:
+        await pilot.press("f3", "a")
+        form = app.screen
+        form.query_one("#title", Input).value = "DJing"
+        form.query_one("#daily", Input).value = "3"
+        form.query_one("#weekly", Input).value = ""
+        form.query_one("#goal-period", Select).value = "week"
+        await pilot.pause()
+        assert not form.query_one("#days-per-week").display
+        assert "Total units per week" in str(form.query_one("#goal-amount-label", Label).render())
+        assert "DJing: 3 sessions per week, on any days. No daily minimum." in str(form.query_one("#goal-preview", Static).render())
+        await pilot.click("#save")
+        await pilot.pause()
+        habit = store.rows("SELECT * FROM habits")[0]
+        assert habit["goal_period"] == "week" and habit["daily_goal"] == 3
+        app.habit_form(edit=True)
+        await pilot.pause()
+        form = app.screen
+        assert not form.query_one("#days-per-week").display
+        form.query_one("#weekly", Input).value = "9"
+        form.query_one("#goal-period", Select).value = "day"
+        await pilot.pause()
+        assert form.query_one("#days-per-week").display
+        await pilot.click("#save")
+        await pilot.pause()
+        assert app.screen is form
+        assert "Days per week" in str(form.query_one("#form-error", Static).render())
+        form.query_one("#weekly", Input).value = "3"
+        await pilot.pause()
+        assert "each of 3 days per week" in str(form.query_one("#goal-preview", Static).render())
+        await pilot.pause(0.3)  # Allow Save button click debounce after validation.
+        await pilot.click("#save")
+        await pilot.pause()
+        habit = store.rows("SELECT * FROM habits")[0]
+        assert habit["goal_period"] == "day" and habit["weekly_goal"] == 3
+        app.habit_form(edit=True)
+        await pilot.pause()
+        form = app.screen
+        form.query_one("#goal-period", Select).value = "week"
+        form.query_one("#weekly", Input).value = "invalid hidden value"
+        form.query_one("#daily", Input).value = "4"
+        await pilot.pause()
+        await pilot.click("#save")
+        await pilot.pause()
+        habit = store.rows("SELECT * FROM habits")[0]
+        assert habit["goal_period"] == "week" and habit["daily_goal"] == 4
+        assert habit["weekly_goal"] == 3
+    store.close()
+
+
+async def test_sidebar_sort_group_moves_selection_and_undo():
+    from textual.widgets import Button
+    store = Store(":memory:")
+    creative = store.add_habit("Creative")
+    exercise = store.add_habit("Exercise")
+    painting = store.add_habit("Painting", parent_id=creative)
+    dj = store.add_habit("DJing", parent_id=creative)
+    app = Tuido(store)
+    async with app.run_test(size=(100, 35)) as pilot:
+        await pilot.press("f3")
+        table = app.query_one("#items", DataTable)
+        ids = lambda: [int(key.value) for key in table.rows]
+        assert ids() == [creative, painting, dj, exercise]
+        await pilot.click("#sidebar-options")
+        app.screen.query_one("#sidebar-sort", Select).value = "name"
+        await pilot.pause()
+        assert ids() == [creative, dj, painting, exercise]
+        assert app.habit_id == creative
+        await pilot.click("#sidebar-options")
+        assert app.screen.query_one("#move-up", Button).disabled
+        await pilot.click("#move-down")
+        await pilot.pause()
+        assert ids() == [exercise, creative, dj, painting]
+        assert app.habit_id == creative and app.row_id(table) == creative
+        assert store.sidebar_sort("habits") == "custom"
+        await pilot.press("ctrl+z")
+        await pilot.pause()
+        assert ids() == [creative, dj, painting, exercise]
+        assert store.sidebar_sort("habits") == "name"
+        table.move_cursor(row=table.get_row_index(str(painting)))
+        await pilot.pause()
+        await pilot.press("alt+up")
+        await pilot.pause()
+        assert ids() == [creative, painting, dj, exercise]
+        assert app.habit_id == painting
+        await pilot.press("f2")
+        await pilot.click("#sidebar-options")
+        assert app.screen.query_one("#move-up", Button).disabled
+        assert app.screen.query_one("#move-down", Button).disabled
+        await pilot.press("escape")
+        await pilot.press("f3")
+        assert store.sidebar_sort("habits") == "custom"
+        await pilot.resize_terminal(60, 30)
+        await pilot.pause()
+        assert not app.query("#sidebar-sort")
+        assert not app.query("#sidebar-order")
+        assert app.query_one("#sidebar-options").region.right <= app.query_one("#library").region.right
+        await pilot.click("#sidebar-options")
+        assert app.screen.query_one("#sidebar-sort", Select).value == "custom"
+        await pilot.press("escape")
+    store.close()

@@ -41,9 +41,10 @@ For the virtual environment already in this workspace:
   textbook exercises have a separate checkoff. Reference the same resource/chapter
   in multiple paths to share progress. Manually created activities can also link
   to an existing Library chapter.
-- **Habits:** seven sidebar boxes for the current Monday–Sunday week and a
-  12-week heatmap. Log checkoffs or quantities such as minutes and pages. Partial
-  days have their own state; weekly targets count days meeting the daily goal.
+- **Habits:** seven sidebar boxes for the selected Monday–Sunday week and a
+  12-week heatmap. Track a daily amount on a chosen number of days per week, or
+  a weekly total on any days. Group interchangeable activities under a parent
+  habit; child entries contribute automatically without copying progress.
 - **Skills:** milestones with suggested evidence drawn from syllabus activities.
   Choose Not yet, Explored, Practised, or Demonstrated. Demonstrated requires
   recorded evidence; finishing readings does not automatically claim mastery.
@@ -122,18 +123,32 @@ Magic player's reduced-motion behavior. No Node dependency is required by TuiDo.
 | `n` | Continue the next ready required activity |
 | `p` | Plan selected activity or chapter for today |
 | `i` / `v` | Inspect notes / open in-app learning map |
+| Alt+Up / Alt+Down | Move selected sidebar item within its group |
 | `r` / Rename button | Rename the selected item in its pane |
 | Delete | Delete item, or archive activity; Ctrl+Z restores it |
 | `e` | Toggle textbook exercises in Library |
-| `+` / `-` | Add / subtract one habit unit today |
+| `+` / `-` | Add / subtract one habit unit on the selected date |
 | Ctrl+O | Preview and import syllabus JSON |
 | Ctrl+J | Jot on the displayed journal date; prefix `- ` for a note |
 | Ctrl+T | Show / hide Today |
-| Ctrl+Left / Ctrl+Right | Previous / next journal date |
+| Ctrl+Left / Ctrl+Right | Previous / next habit and journal date |
 | Ctrl+Y | Carry an unfinished historical task to today |
 | Ctrl+Z | Undo up to 50 changes in the current session |
 | `?` | Help |
 | Ctrl+Q | Quit |
+
+Open **⋯** beside **Rename** in any left sidebar (Paths, Library, Habits, Skills)
+for sorting and ordering options: **Custom
+order**, **Name A–Z**, **Name Z–A**, **Oldest first**, and **Newest first**.
+Skills also offer **Skill level**. Habits always appear as a tree: parents first,
+then their indented children. Sorting applies within each group.
+
+Select an item and use **↑ Up / ↓ Down** in **⋯**, or **Alt+Up / Alt+Down** while focused
+in the left sidebar, to arrange it manually. Moving a parent moves its whole
+habit group; children move among siblings. A manual move adopts the displayed
+order as **Custom order**. Switching to another sort preserves that custom
+order so you can return to it. Each sidebar remembers its settings after restart;
+Ctrl+Z undoes sort and ordering changes. New items append to the custom order.
 
 Select an item and click **Rename** in that pane's heading, or press **r**.
 This works for paths, modules, activities, books, chapters, habits, skills, and
@@ -144,6 +159,31 @@ Reopening a linked daily task keeps its recorded progress. Rechecking it does no
 log habit credit twice. Use Undo to reverse the entire linked action. Linking a
 habit to a planned task logs **one unit** on completion; log time separately for
 habits measured in minutes.
+
+In Habits, use **‹ / ›**, **Today**, or **Date…** to choose any past or future
+date, even with the journal hidden. **Log amount** adds units; **Set amount**
+replaces the habit's direct entry for that date (including zero). Ctrl+Z undoes
+either action. Future entries appear as plans (`◇`) and stay out of recorded
+weekly totals. They remain plans when their date arrives: use **Set amount** on
+or after that date to confirm the actual amount. Habit and journal dates are shared.
+
+Use **Edit habit** to change the name, unit, goal, period, or parent. Choose
+**Amount on each active day** or **Total per week — any days** first. Daily
+goals show a days-per-week field; weekly totals need only the weekly amount.
+A live preview describes the resulting goal as you type. For example:
+
+- **Creative:** daily amount **1**, unit **sessions**, **7** days per week.
+- **DJing:** weekly total **3**, unit **sessions**, parent **Creative**.
+- **Painting:** daily amount **1**, unit **sessions**, parent **Creative**.
+
+A DJing or Painting session meets Creative's daily goal. DJing can reach its
+weekly target on any combination of days, including multiple sessions on one day.
+Weekly totals have no daily quota; goal amounts start at 1. Daily goals retain
+the existing days-per-week target. Groups must use the same unit, and can nest.
+Parent totals include their own entries plus all descendants; **Set amount**
+changes only the selected habit's own entry. Delete a parent to keep its children
+as independent habits. Goal and grouping changes apply to the entire displayed
+history, while recorded entries stay intact.
 
 ## Your data
 

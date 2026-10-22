@@ -43,22 +43,23 @@ class Form(ModalScreen[dict | None]):
             field.action_select_all()
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(id="dialog"):
-            yield Label(self.heading, classes="dialog-title")
-            for name, label, value, multiline in self.fields:
-                yield Label(label)
-                if multiline:
-                    yield TextArea(value, id=name)
-                else:
-                    yield Input(value, id=name)
-            if self.textbook:
-                yield Checkbox("Track exercises separately", id="textbook")
-            for name, (label, options, value) in self.choices.items():
-                yield Label(label)
-                yield Select(options, value=value, allow_blank=False, id=name)
-            if self.habits is not None:
-                yield Label("Also log 1 unit to a habit when completed (optional)")
-                yield Select([(h["title"], h["id"]) for h in self.habits], prompt="No habit", id="linked-habit")
+        with Vertical(id="dialog"):
+            with VerticalScroll(id="form-fields"):
+                yield Label(self.heading, classes="dialog-title")
+                for name, label, value, multiline in self.fields:
+                    yield Label(label)
+                    if multiline:
+                        yield TextArea(value, id=name)
+                    else:
+                        yield Input(value, id=name)
+                if self.textbook:
+                    yield Checkbox("Track exercises separately", id="textbook")
+                for name, (label, options, value) in self.choices.items():
+                    yield Label(label)
+                    yield Select(options, value=value, allow_blank=False, id=name)
+                if self.habits is not None:
+                    yield Label("Also log 1 unit to a habit when completed (optional)")
+                    yield Select([(h["title"], h["id"]) for h in self.habits], prompt="No habit", id="linked-habit")
             yield Static("", id="form-error")
             with Horizontal(classes="buttons"):
                 yield Button("Save", variant="primary", id="save")
@@ -77,15 +78,11 @@ class Form(ModalScreen[dict | None]):
         if "title" in values and not values["title"]:
             self.query_one("#form-error", Static).update("Enter a name or some text first.")
             return
-        for name, low, high in (("daily", 1, 1000000), ("weekly", 1, 7)):
-            if name in values:
-                try:
-                    values[name] = int(values[name])
-                    if not low <= values[name] <= high:
-                        raise ValueError
-                except ValueError:
-                    self.query_one("#form-error", Static).update(f"{name.capitalize()} goal must be a whole number from {low} to {high}.")
-                    return
+        try:
+            self.validate_numbers(values)
+        except ValueError as exc:
+            self.query_one("#form-error", Static).update(Text(str(exc)))
+            return
         if self.textbook:
             values["textbook"] = self.query_one("#textbook", Checkbox).value
         if self.habits is not None:
@@ -101,9 +98,130 @@ class Form(ModalScreen[dict | None]):
                 return
         self.dismiss(values)
 
+    def validate_numbers(self, values):
+        for name, low, high in (("daily", 1, 1000000), ("weekly", 1, 7)):
+            if name in values:
+                try:
+                    values[name] = int(values[name])
+                    if not low <= values[name] <= high:
+                        raise ValueError
+                except ValueError:
+                    raise ValueError(f"{name.capitalize()} goal must be a whole number from {low} to {high}.")
+
     @on(Input.Submitted)
     def submitted(self):
         self.save()
+
+
+class HabitForm(Form):
+    """Show goal-specific controls and describe the resulting target in plain text."""
+
+    def compose(self):
+        fields = {name: (label, value) for name, label, value, _ in self.fields}
+        with Vertical(id="dialog"):
+            with VerticalScroll(id="form-fields"):
+                yield Label(self.heading, classes="dialog-title")
+                for name in ("title", "unit"):
+                    label, value = fields[name]
+                    yield Label(label)
+                    yield Input(value, id=name)
+                label, options, value = self.choices["goal-period"]
+                yield Label(label)
+                yield Select(options, value=value, allow_blank=False, id="goal-period")
+                yield Label("", id="goal-amount-label")
+                yield Input(fields["daily"][1], id="daily", type="integer")
+                with Vertical(id="days-per-week"):
+                    yield Label("How many days per week? (1–7)")
+                    yield Input(fields["weekly"][1], id="weekly", type="integer")
+                yield Static("", id="goal-preview")
+                label, options, value = self.choices["parent"]
+                yield Label(label)
+                yield Select(options, value=value, allow_blank=False, id="parent")
+                yield Static("Optional: entries also count toward this habit. Both must use the same unit.")
+            yield Static("", id="form-error")
+            with Horizontal(classes="buttons"):
+                yield Button("Save", variant="primary", id="save")
+                yield Button("Cancel", id="cancel")
+
+    def on_mount(self):
+        self.update_goal_ui()
+        self.query_one("#title", Input).focus()
+
+    @on(Select.Changed, "#goal-period")
+    @on(Input.Changed, "#daily, #weekly, #unit, #title")
+    def update_goal_ui(self):
+        weekly = self.query_one("#goal-period", Select).value == "week"
+        self.query_one("#days-per-week").display = not weekly
+        self.query_one("#goal-amount-label", Label).update("Total units per week" if weekly else "Units on each active day")
+        self.query_one("#form-error", Static).update("")
+        title = self.query_one("#title", Input).value.strip() or "This habit"
+        unit = self.query_one("#unit", Input).value.strip() or "sessions"
+        amount = self.query_one("#daily", Input).value.strip() or "…"
+        days = self.query_one("#weekly", Input).value.strip() or "…"
+        description = (f"{title}: {amount} {unit} per week, on any days. No daily minimum."
+                       if weekly else f"{title}: {amount} {unit} on each of {days} days per week. You choose the days.")
+        self.query_one("#goal-preview", Static).update(Text(description))
+
+    def validate_numbers(self, values):
+        weekly = self.query_one("#goal-period", Select).value == "week"
+        try:
+            values["daily"] = int(values["daily"])
+            if not 1 <= values["daily"] <= 1000000:
+                raise ValueError
+        except ValueError:
+            label = "Total units per week" if weekly else "Units on each active day"
+            raise ValueError(f"{label} must be a whole number from 1 to 1000000.")
+        if weekly:
+            # Preserve the daily schedule for switching back, without validating
+            # a hidden field or applying it to a weekly total.
+            values["weekly"] = next(int(value) for name, _, value, _ in self.fields if name == "weekly")
+        else:
+            try:
+                values["weekly"] = int(values["weekly"])
+                if not 1 <= values["weekly"] <= 7:
+                    raise ValueError
+            except ValueError:
+                raise ValueError("Days per week must be a whole number from 1 to 7.")
+
+
+class SidebarOptions(ModalScreen):
+    BINDINGS = [("escape", "dismiss", "Close")]
+
+    def __init__(self, collection, sorts, current, title, can_up, can_down):
+        super().__init__()
+        self.collection, self.sorts, self.current = collection, sorts, current
+        self.title, self.can_up, self.can_down = title, can_up, can_down
+
+    def compose(self):
+        labels = {"custom": "Custom order", "name": "Name A–Z", "name-desc": "Name Z–A",
+                  "oldest": "Oldest first", "newest": "Newest first", "level": "Skill level"}
+        with Vertical(id="dialog"):
+            yield Label(f"{self.collection.capitalize()} · options", classes="dialog-title")
+            yield Label("Sort list")
+            yield Select([(labels[key], key) for key in self.sorts], value=self.current,
+                         allow_blank=False, id="sidebar-sort")
+            yield Static(Text(f"Move: {self.title}" if self.title else "Select an item to move it."))
+            with Horizontal(id="sidebar-order"):
+                yield Button("↑ Up", id="move-up", disabled=not self.can_up)
+                yield Button("↓ Down", id="move-down", disabled=not self.can_down)
+            yield Static("Parents move with their children. Children move among siblings."
+                         if self.collection == "habits" else "Moving an item saves a custom order.")
+            yield Button("Close", id="close-options")
+
+    def on_mount(self):
+        self.query_one("#sidebar-sort").focus()
+
+    @on(Select.Changed, "#sidebar-sort")
+    def choose_sort(self, event):
+        event.stop()
+        if event.value in self.sorts and event.value != self.current:
+            self.dismiss(("sort", event.value))
+
+    @on(Button.Pressed)
+    def choose_action(self, event):
+        event.stop()
+        direction = {"move-up": -1, "move-down": 1}.get(event.button.id)
+        self.dismiss(("move", direction) if direction else None)
 
 
 class Help(ModalScreen):
@@ -121,8 +239,9 @@ class Help(ModalScreen):
                 "p                 Put the selected chapter in Today\n"
                 "a                 Add to the focused column\n"
                 "r / Rename button Rename the selected item in that pane\n"
+                "Alt+Up/Down       Reorder selected sidebar item (also in ⋯ options)\n"
                 "Delete            Delete selected item (Ctrl+Z to undo)\n"
-                "+ / -             Add / subtract one habit unit today\n"
+                "+ / -             Add / subtract one habit unit on selected date\n"
                 "Ctrl+J            Jot a task (prefix '- ' for a note)\n"
                 "Ctrl+T            Show / hide the daily pane\n"
                 "F1 / F2 / F3 / F4 Paths / Library / Habits / Skills\n"
@@ -130,7 +249,7 @@ class Help(ModalScreen):
                 "c                 Add a child inside the selected module\n"
                 "n                 Continue the next ready required activity\n"
                 "i / v             Inspect notes / open syllabus diagrams\n"
-                "Ctrl+Left/Right   Browse journal dates\n"
+                "Ctrl+Left/Right   Browse habit and journal dates\n"
                 "Ctrl+Y            Carry selected unfinished bullet to today\n"
                 "Ctrl+Z            Undo last change (up to 50 this session)\n"
                 "Ctrl+Q            Quit\n\n"
@@ -141,8 +260,9 @@ class Help(ModalScreen):
                 "Planning a chapter can link it to a habit. Completing the bullet\n"
                 "finishes the reading and logs one habit unit in one undoable step.\n"
                 "Reopening it keeps that progress; use Undo to reverse the action.\n\n"
-                "Habit shading shows progress toward a daily goal. Weekly targets\n"
-                "count days that met that goal. Future dates are left blank."
+                "Habits support daily amounts or weekly totals on any days.\n"
+                "Child habits contribute to their parent. Future entries are plans.\n"
+                "Use Edit habit for goals, Set amount for corrections, Date to jump."
             )
             yield Button("Back to the desk", id="close-help")
 
@@ -179,6 +299,8 @@ class Tuido(LearningUI, App):
         Binding("ctrl+left", "previous_day", "Previous day", show=False),
         Binding("ctrl+right", "next_day", "Next day", show=False),
         Binding("ctrl+y", "migrate", "Carry forward", show=False),
+        Binding("alt+up", "move_up", "Move up", show=False),
+        Binding("alt+down", "move_down", "Move down", show=False),
         Binding("question_mark", "help", "Help"),
     ]
 
@@ -213,6 +335,7 @@ class Tuido(LearningUI, App):
                 with Horizontal(classes="panel-heading"):
                     yield Label("Books", id="library-title", classes="heading")
                     yield Button("Rename", id="rename-item", disabled=True)
+                    yield Button("⋯", id="sidebar-options", tooltip="List options: sort and reorder")
                 yield WrappingTable(id="items", cursor_type="row", show_header=False, show_row_labels=False)
                 yield Static("", id="library-empty", classes="empty")
                 yield Button("+ Book", id="add-item")
@@ -231,13 +354,21 @@ class Tuido(LearningUI, App):
                     yield Static("", id="skill-description")
                     yield Button("Record progress & evidence", id="edit-skill")
                 with VerticalScroll(id="habit-detail"):
+                    with Horizontal(id="habit-nav", classes="buttons"):
+                        yield Button("‹", id="habit-prev")
+                        yield Button("Today", id="habit-today")
+                        yield Button("›", id="habit-next")
+                        yield Button("Date…", id="habit-date")
                     yield Static("", id="habit-summary")
-                    yield Static("", id="heatmap")
-                    yield Static("", id="habit-legend")
                     with Horizontal(classes="buttons"):
                         yield Button("− 1", id="subtract-unit")
                         yield Button("+ 1 unit", id="add-unit", variant="primary")
                         yield Button("Log amount", id="log-amount")
+                    with Horizontal(classes="buttons"):
+                        yield Button("Set amount", id="set-amount")
+                        yield Button("Edit habit", id="edit-habit")
+                    yield Static("", id="heatmap")
+                    yield Static("", id="habit-legend")
                 yield Static("", id="detail-empty", classes="empty")
                 yield Static("", id="detail-hint", classes="hint")
                 yield Static("", id="learning-info", classes="hint")
@@ -362,7 +493,7 @@ class Tuido(LearningUI, App):
         self.query_one("#library-title", Label).update("Books" if books else "Habits")
         self.query_one("#add-item", Button).label = "+ Book" if books else "+ Habit"
         if books:
-            items = self.store.rows("SELECT * FROM books ORDER BY id")
+            items = self.store.sidebar_items("books")
             progress = {b["id"]: Text(b["title"] + "\n") for b in items}
             for unit in self.store.rows("SELECT book_id,reading FROM chapters ORDER BY book_id,position,id"):
                 state = unit["reading"]
@@ -372,23 +503,24 @@ class Tuido(LearningUI, App):
                 )
             self.book_id = self.fill("#items", [(b["id"], [progress[b["id"]]]) for b in items], self.book_id)
         else:
-            items = self.store.rows("SELECT * FROM habits ORDER BY id")
-            monday = today - timedelta(days=today.weekday())
-            sunday = monday + timedelta(days=6)
-            counts = {(r["habit_id"], r["day"]): r["amount"] for r in self.store.rows(
-                "SELECT habit_id,day,amount FROM checkins WHERE day BETWEEN ? AND ?",
-                (monday.isoformat(), sunday.isoformat()),
-            )}
+            items = self.store.sidebar_items("habits")
+            monday = self.journal_day - timedelta(days=self.journal_day.weekday())
             rows = []
             for habit in items:
-                progress = Text(habit["title"] + "\n")
+                depth = habit["sidebar_depth"]
+                progress = Text(("  " * (depth - 1) + "↳ " if depth else "") + habit["title"] + "\n")
+                counts = self.store.habit_counts(habit["id"], planned=False)
+                plans = self.store.habit_counts(habit["id"], planned=True)
                 for offset in range(7):
                     day = monday + timedelta(days=offset)
-                    amount = counts.get((habit["id"], day.isoformat()), 0) if day <= today else 0
-                    state = 2 if amount >= habit["daily_goal"] else 1 if amount else 0
+                    amount = counts.get(day.isoformat(), 0)
+                    if plans.get(day.isoformat(), 0):
+                        progress.append("◇ ", style="#8fa5bb")
+                        continue
+                    state = 2 if amount >= (habit["daily_goal"] if habit["goal_period"] == "day" else 1) else 1 if amount else 0
                     progress.append(
                         ("□", "◧", "■")[state] + " ",
-                        style="#30455b" if day > today else ("#667d94", "#e5bc72", "#74c5b2")[state],
+                        style="#8fa5bb" if day > today and amount else "#30455b" if day > today else ("#667d94", "#e5bc72", "#74c5b2")[state],
                     )
                 rows.append((habit["id"], [progress]))
             self.habit_id = self.fill("#items", rows, self.habit_id)
@@ -437,7 +569,7 @@ class Tuido(LearningUI, App):
             self.query_one("#detail-empty", Static).update("Add chapters below, or paste a chapter list when creating a book.")
             self.query_one("#detail-hint", Static).update("Enter / Space: reading status   e: exercises   p: plan today" if book["textbook"] else "Enter / Space: reading status   p: plan today")
         else:
-            self.query_one("#detail-hint", Static).update("+ / −: log a unit today   Shading follows your daily goal")
+            self.query_one("#detail-hint", Static).update("+ / −: log on selected date   Ctrl+Left/Right: change date")
             matches = self.store.rows("SELECT * FROM habits WHERE id=?", (self.habit_id,))
             self.query_one("#habit-detail").display = bool(matches)
             self.query_one("#detail-title", Label).update(Text(matches[0]["title"]) if matches else "Your daily rhythms")
@@ -446,12 +578,31 @@ class Tuido(LearningUI, App):
 
     def render_habit(self, habit):
         today = date.today()
-        counts = {r["day"]: r["amount"] for r in self.store.rows("SELECT day,amount FROM checkins WHERE habit_id=?", (habit["id"],))}
-        monday = today - timedelta(days=today.weekday())
-        weekly = sum(counts.get((monday+timedelta(days=n)).isoformat(), 0) >= habit["daily_goal"] for n in range(today.weekday()+1))
+        selected = self.journal_day
+        counts = self.store.habit_counts(habit["id"], planned=False)
+        plans = self.store.habit_counts(habit["id"], planned=True)
+        direct = self.store.rows("SELECT amount FROM checkins WHERE habit_id=? AND day=?", (habit["id"], selected.isoformat()))
+        own = direct[0]["amount"] if direct else 0
+        monday = selected - timedelta(days=selected.weekday())
+        days = [monday + timedelta(days=n) for n in range(7)]
+        actual = [d for d in days if d <= today]
+
+        if habit["goal_period"] == "week":
+            weekly = sum(counts.get(d.isoformat(), 0) for d in actual)
+            planned = sum(plans.get(d.isoformat(), 0) for d in days)
+            goal = f'{habit["daily_goal"]} {habit["unit"]} / week'
+            week_line = f'Week of {monday:%d %b}: {weekly} / {habit["daily_goal"]} {habit["unit"]}; {planned} planned'
+            day_line = f'{counts.get(selected.isoformat(), 0)} recorded + {plans.get(selected.isoformat(), 0)} planned {habit["unit"]}'
+        else:
+            weekly = sum(counts.get(d.isoformat(), 0) >= habit["daily_goal"] for d in actual)
+            planned = sum(plans.get(d.isoformat(), 0) >= habit["daily_goal"] for d in days)
+            goal = f'{habit["daily_goal"]} {habit["unit"]} / day, {habit["weekly_goal"]} days / week'
+            week_line = f'Week of {monday:%d %b}: {weekly} / {habit["weekly_goal"]} days; {planned} planned'
+            day_line = f'{counts.get(selected.isoformat(), 0)} / {habit["daily_goal"]} {habit["unit"]}; {plans.get(selected.isoformat(), 0)} planned'
+        label = "Planned" if selected > today else "Recorded"
         self.query_one("#habit-summary", Static).update(Text(
-            f'Today   {counts.get(today.isoformat(),0)} / {habit["daily_goal"]} {habit["unit"]}\n'
-            f'This week   {weekly} / {habit["weekly_goal"]} days\n\nLast 12 weeks', style="#b7c8d9"))
+            f'{selected:%a %d %b %Y} · {label}\n{day_line} (direct: {own})\n'
+            f'Goal: {goal}\n{week_line}\n\n12 weeks through selected week', style="#b7c8d9"))
         start = monday - timedelta(weeks=11)
         grid = Text()
         grid.append("    ")
@@ -464,19 +615,19 @@ class Tuido(LearningUI, App):
             for week in range(12):
                 day = start + timedelta(weeks=week, days=weekday)
                 amount = counts.get(day.isoformat(), 0)
-                if day > today:
-                    grid.append("  ")
+                if plans.get(day.isoformat(), 0) or day > today:
+                    grid.append("◇ " if plans.get(day.isoformat(), 0) else "  ", style="#8fa5bb")
                 else:
-                    level = min(3, max(1, int(amount / habit["daily_goal"] * 3))) if amount else 0
+                    level = min(3, max(1, int(amount / (habit["daily_goal"] if habit["goal_period"] == "day" else 1) * 3))) if amount else 0
                     grid.append("■ ", style=("#30455b", "#376d70", "#52a394", "#9ae2c9")[level])
             grid.append("\n")
         self.query_one("#heatmap", Static).update(grid)
-        self.query_one("#habit-legend", Static).update("■ none    ▧ partial    ■ goal met\nEach column is a week; each row is a weekday.")
+        self.query_one("#habit-legend", Static).update("■ none / partial / goal met    ◇ planned\nWeekly goals: shading shows days with activity.\nTotals include children; edits change direct entries.\nSet amount on or after the date confirms a plan.")
 
     def refresh_journal(self):
         day = self.journal_day.isoformat()
         today = self.journal_day == date.today()
-        self.query_one("#journal-title", Label).update("Today" if today else "Journal history")
+        self.query_one("#journal-title", Label).update("Today" if today else "Plan ahead" if self.journal_day > date.today() else "Journal history")
         bullets = self.store.rows("SELECT * FROM bullets WHERE day=? ORDER BY id", (day,))
         done = sum(bool(b["done"]) for b in bullets if not b["note"])
         tasks = sum(not b["note"] and not b["migrated"] for b in bullets)
@@ -510,6 +661,7 @@ class Tuido(LearningUI, App):
             self.path_id = int(event.row_key.value)
         else:
             self.skill_id = int(event.row_key.value)
+        self.refresh_rename_controls()
         self.refresh_detail()
 
     @on(DataTable.RowSelected)
@@ -535,17 +687,61 @@ class Tuido(LearningUI, App):
                    "import-syllabus": self.action_import, "add-activity": self.add_activity,
                    "continue-path": self.action_continue, "view-visual": self.action_visual,
                    "edit-skill": self.edit_skill,
+                   "sidebar-options": self.sidebar_options,
                    "show-today": self.action_today, "add-item": self.add_item,
                    "add-chapter": self.add_chapter, "plan-chapter": self.action_plan,
                    "jot": self.action_jot, "prev-day": self.action_previous_day,
                    "next-day": self.action_next_day, "current-day": self.current_day,
                    "add-unit": self.action_increment, "subtract-unit": self.action_decrement,
-                   "log-amount": self.log_amount}
+                   "log-amount": self.log_amount, "set-amount": self.set_amount,
+                   "edit-habit": lambda: self.habit_form(edit=True),
+                   "habit-prev": self.action_previous_day, "habit-next": self.action_next_day,
+                   "habit-today": self.current_day, "habit-date": self.choose_date}
         actions.update({"rename-item": lambda: self.action_rename("items"),
                         "rename-detail": lambda: self.action_rename(self.detail_selection()),
                         "rename-bullet": lambda: self.action_rename("bullets")})
         if action := actions.get(event.button.id):
             action()
+
+    def sidebar_options(self):
+        table = self.mode
+        selected = self.row_id(self.query_one("#items", DataTable))
+        items = self.store.sidebar_items(table)
+        item = next((row for row in items if row["id"] == selected), None)
+        siblings = [row["id"] for row in items if table != "habits" or item and row["parent_id"] == item["parent_id"]]
+        index = siblings.index(selected) if selected in siblings else -1
+        def apply(result):
+            if result is None:
+                return
+            action, value = result
+            if action == "sort":
+                self.store.set_sidebar_sort(table, value)
+                self.refresh_desk()
+            else:
+                self.move_sidebar(value)
+        self.push_screen(SidebarOptions(
+            table, self.store.sidebar_sorts(table), self.store.sidebar_sort(table),
+            item["title"] if item else None, index > 0, 0 <= index < len(siblings) - 1), apply)
+
+    def move_sidebar(self, direction):
+        item_id = self.row_id(self.query_one("#items", DataTable))
+        if item_id is None:
+            return
+        if self.store.move_sidebar_item(self.mode, item_id, direction):
+            setattr(self, {"books": "book_id", "habits": "habit_id", "paths": "path_id", "skills": "skill_id"}[self.mode], item_id)
+            self.refresh_desk()
+            self.query_one("#items").focus()
+            self.status("Order saved. Habit groups move together; children move among siblings. Ctrl+Z undoes this change.")
+        else:
+            self.status("Already at the edge of this group." if self.mode == "habits" else "Already at the edge of this list.")
+
+    def action_move_up(self):
+        if self.focused is not None and self.query_one("#library") in self.focused.ancestors:
+            self.move_sidebar(-1)
+
+    def action_move_down(self):
+        if self.focused is not None and self.query_one("#library") in self.focused.ancestors:
+            self.move_sidebar(1)
 
     def action_books(self):
         self.mode = "books"
@@ -589,11 +785,36 @@ class Tuido(LearningUI, App):
                     self.refresh_desk()
             self.push_screen(Form("Add a book", [("title", "Book title", "", False), ("chapters", "Chapters — one per line (optional)", "", True)], textbook=True), save)
         else:
-            def save(values):
-                if values:
-                    self.habit_id = self.store.add_habit(values["title"], values["unit"] or "sessions", values["daily"], values["weekly"])
-                    self.refresh_desk()
-            self.push_screen(Form("Add a habit", [("title", "Habit", "", False), ("unit", "Unit", "sessions", False), ("daily", "Daily goal (units)", "1", False), ("weekly", "Weekly goal (days meeting daily goal)", "7", False)]), save)
+            self.habit_form()
+
+    def habit_form(self, edit=False):
+        habit_id = self.habit_id if edit else None
+        if edit and habit_id is None:
+            return
+        habit = self.store.rows("SELECT * FROM habits WHERE id=?", (habit_id,))[0] if edit else {
+            "title": "", "unit": "sessions", "daily_goal": 1, "weekly_goal": 7,
+            "goal_period": "day", "parent_id": None}
+        def validate(values):
+            self.store.validate_habit(values["unit"] or "sessions", values["daily"], values["weekly"],
+                                      values["goal-period"], values["parent"] or None, habit_id)
+        def save(values):
+            if values:
+                args = (values["title"], values["unit"] or "sessions", values["daily"], values["weekly"],
+                        values["goal-period"], values["parent"] or None)
+                if edit:
+                    self.store.edit_habit(habit_id, *args)
+                else:
+                    self.habit_id = self.store.add_habit(*args)
+                self.refresh_desk()
+        parents = [("No parent", 0)] + [(h["title"], h["id"]) for h in self.store.rows("SELECT * FROM habits ORDER BY id") if h["id"] != habit_id]
+        form = HabitForm("Edit habit" if edit else "Add a habit", [
+            ("title", "Habit", habit["title"], False), ("unit", "Unit (same as parent, if grouped)", habit["unit"], False),
+            ("daily", "Goal amount per chosen period", str(habit["daily_goal"]), False),
+            ("weekly", "Days per week (daily goals only)", str(habit["weekly_goal"]), False)],
+            choices={"goal-period": ("How do you want to set your goal?", [("Amount on each active day", "day"), ("Total per week — any days", "week")], habit["goal_period"]),
+                     "parent": ("Also counts toward (optional)", parents, habit["parent_id"] or 0)}, validator=validate)
+        form.add_class("habit-form")
+        self.push_screen(form, save)
 
     def add_chapter(self):
         if self.mode != "books" or self.book_id is None:
@@ -672,7 +893,7 @@ class Tuido(LearningUI, App):
 
     def increment(self, amount):
         if self.mode == "habits" and self.habit_id is not None:
-            self.store.checkin(self.habit_id, date.today().isoformat(), amount)
+            self.store.checkin(self.habit_id, self.journal_day.isoformat(), amount)
             self.refresh_desk()
 
     def action_increment(self):
@@ -687,7 +908,38 @@ class Tuido(LearningUI, App):
         def save(values):
             if values:
                 self.increment(values["daily"])
-        self.push_screen(Form("Log an amount today", [("daily", "Units to add", "1", False)]), save)
+        self.push_screen(Form(f"Add amount · {self.journal_day:%d %b %Y}", [("daily", "Units to add", "1", False)]), save)
+
+    def set_amount(self):
+        if self.habit_id is None:
+            return
+        habit_id, day = self.habit_id, self.journal_day.isoformat()
+        rows = self.store.rows("SELECT amount FROM checkins WHERE habit_id=? AND day=?", (habit_id, day))
+        def validate(values):
+            try:
+                amount = int(values["amount"])
+                if amount < 0:
+                    raise ValueError
+            except ValueError:
+                raise ValueError("Enter a nonnegative whole number; 0 clears the direct entry.")
+            values["amount"] = amount
+        def save(values):
+            if values:
+                self.store.set_checkin(habit_id, day, values["amount"])
+                self.refresh_desk()
+        self.push_screen(Form(f"Set direct amount · {day}", [("amount", "Total units (child entries are separate)", str(rows[0]["amount"] if rows else 0), False)], validator=validate), save)
+
+    def choose_date(self):
+        def validate(values):
+            try:
+                values["day"] = date.fromisoformat(values["day"])
+            except ValueError:
+                raise ValueError("Enter a date as YYYY-MM-DD.")
+        def save(values):
+            if values:
+                self.journal_day = values["day"]
+                self.refresh_desk()
+        self.push_screen(Form("Choose a date", [("day", "Date (YYYY-MM-DD)", self.journal_day.isoformat(), False)], validator=validate), save)
 
     def selected_record(self, selector=None):
         focused = selector or getattr(self.focused, "id", None)
@@ -736,16 +988,15 @@ class Tuido(LearningUI, App):
 
     def action_previous_day(self):
         self.journal_day -= timedelta(days=1)
-        self.refresh_journal()
+        self.refresh_desk()
 
     def action_next_day(self):
-        if self.journal_day < date.today():
-            self.journal_day += timedelta(days=1)
-            self.refresh_journal()
+        self.journal_day += timedelta(days=1)
+        self.refresh_desk()
 
     def current_day(self):
         self.journal_day = date.today()
-        self.refresh_journal()
+        self.refresh_desk()
 
     def action_migrate(self):
         if getattr(self.focused, "id", None) != "bullets":

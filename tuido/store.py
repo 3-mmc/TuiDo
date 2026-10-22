@@ -41,10 +41,87 @@ class Store(LearningStore):
                 habit_id INTEGER REFERENCES habits(id) ON DELETE SET NULL);
         """)
         self.init_learning()
+        columns = {r["name"] for r in self.db.execute("PRAGMA table_info(habits)")}
+        if "goal_period" not in columns:
+            self.db.execute("ALTER TABLE habits ADD COLUMN goal_period TEXT NOT NULL DEFAULT 'day' CHECK(goal_period IN ('day','week'))")
+        if "parent_id" not in columns:
+            self.db.execute("ALTER TABLE habits ADD COLUMN parent_id INTEGER REFERENCES habits(id) ON DELETE SET NULL")
+        if "planned" not in {r["name"] for r in self.db.execute("PRAGMA table_info(checkins)")}:
+            self.db.execute("ALTER TABLE checkins ADD COLUMN planned INTEGER NOT NULL DEFAULT 0 CHECK(planned IN (0,1))")
+        for table in ("books", "habits", "paths", "skills"):
+            if "sidebar_position" not in {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}:
+                self.db.execute(f"ALTER TABLE {table} ADD COLUMN sidebar_position INTEGER")
+        self.db.execute("CREATE TABLE IF NOT EXISTS sidebar_preferences (collection TEXT PRIMARY KEY, sort TEXT NOT NULL)")
+        self.db.commit()
         self._undo: list[bytes] = []
 
     def rows(self, sql, args=()):
         return [dict(r) for r in self.db.execute(sql, args)]
+
+    @staticmethod
+    def sidebar_sorts(table):
+        if table not in {"books", "habits", "paths", "skills"}:
+            raise ValueError("Unknown sidebar")
+        return ["custom", "name", "name-desc", "oldest", "newest"] + (["level"] if table == "skills" else [])
+
+    def sidebar_sort(self, table):
+        self.sidebar_sorts(table)
+        preference = self.rows("SELECT sort FROM sidebar_preferences WHERE collection=?", (table,))
+        return preference[0]["sort"] if preference else "level" if table == "skills" else "custom"
+
+    def set_sidebar_sort(self, table, sort):
+        if sort not in self.sidebar_sorts(table):
+            raise ValueError("Unknown sort option")
+        if sort != self.sidebar_sort(table):
+            with self.change():
+                self._set_sidebar_sort(table, sort)
+
+    def _set_sidebar_sort(self, table, sort):
+        self.db.execute("INSERT INTO sidebar_preferences VALUES (?,?) ON CONFLICT(collection) DO UPDATE SET sort=excluded.sort", (table, sort))
+
+    def sidebar_items(self, table):
+        sort = self.sidebar_sort(table)
+        items = self.rows(f"SELECT * FROM {table}" + (" WHERE active=1" if table == "skills" else ""))
+        keys = {
+            "custom": lambda row: (row["sidebar_position"] is None, row["sidebar_position"] or 0, row["id"]),
+            "name": lambda row: (row["title"].casefold(), row["id"]),
+            "name-desc": lambda row: (row["title"].casefold(), row["id"]),
+            "oldest": lambda row: row["id"], "newest": lambda row: -row["id"],
+            "level": lambda row: (-row["level"], row["id"]),
+        }
+        items.sort(key=keys[sort], reverse=sort == "name-desc")
+        if table != "habits":
+            return items
+        children = {}
+        for item in items:
+            children.setdefault(item["parent_id"], []).append(item)
+        ordered = []
+        def walk(parent, depth):
+            for item in children.get(parent, []):
+                ordered.append({**item, "sidebar_depth": depth})
+                walk(item["id"], depth + 1)
+        walk(None, 0)
+        return ordered
+
+    def move_sidebar_item(self, table, item_id, direction):
+        """Move among siblings, keeping groups intact; adopt the visible order."""
+        if direction not in {-1, 1}:
+            raise ValueError("Move up or down")
+        items = self.sidebar_items(table)
+        item = next((row for row in items if row["id"] == item_id), None)
+        if item is None:
+            return False
+        siblings = [row for row in items if table != "habits" or row["parent_id"] == item["parent_id"]]
+        index = next(i for i, row in enumerate(siblings) if row["id"] == item_id)
+        if not 0 <= index + direction < len(siblings):
+            return False
+        positions = {row["id"]: i for i, row in enumerate(items)}
+        neighbor = siblings[index + direction]["id"]
+        positions[item_id], positions[neighbor] = positions[neighbor], positions[item_id]
+        with self.change():
+            self.db.executemany(f"UPDATE {table} SET sidebar_position=? WHERE id=?", [(position, row_id) for row_id, position in positions.items()])
+            self._set_sidebar_sort(table, "custom")
+        return True
 
     @contextmanager
     def change(self):
@@ -86,17 +163,64 @@ class Store(LearningStore):
             else:
                 self.db.execute("UPDATE chapters SET reading=(reading+1)%3 WHERE id=?", (chapter_id,))
 
-    def add_habit(self, title, unit="sessions", daily_goal=1, weekly_goal=7):
+    def validate_habit(self, unit, daily_goal, weekly_goal, goal_period, parent_id=None, habit_id=None):
+        if not isinstance(daily_goal, int) or not 1 <= daily_goal <= 1000000:
+            raise ValueError("Goal must be a whole number from 1 to 1000000.")
+        if goal_period not in {"day", "week"} or not 1 <= weekly_goal <= 7:
+            raise ValueError("Choose a daily or weekly goal; days per week must be from 1 to 7.")
+        habits = {h["id"]: h for h in self.rows("SELECT * FROM habits")}
+        seen = {habit_id}
+        ancestor = parent_id
+        while ancestor is not None:
+            if ancestor in seen:
+                raise ValueError("A habit cannot be its own ancestor.")
+            if ancestor not in habits:
+                raise ValueError("Choose an existing parent habit.")
+            seen.add(ancestor)
+            if habits[ancestor]["unit"] != unit:
+                raise ValueError("Parent and child habits must use the same unit.")
+            ancestor = habits[ancestor]["parent_id"]
+        if habit_id is not None and any(h["parent_id"] == habit_id and h["unit"] != unit for h in habits.values()):
+            raise ValueError("Parent and child habits must use the same unit.")
+
+    def add_habit(self, title, unit="sessions", daily_goal=1, weekly_goal=7, goal_period="day", parent_id=None):
+        self.validate_habit(unit, daily_goal, weekly_goal, goal_period, parent_id)
         with self.change():
-            return self.db.execute("INSERT INTO habits(title,unit,daily_goal,weekly_goal) VALUES (?,?,?,?)",
-                                   (title, unit, daily_goal, weekly_goal)).lastrowid
+            return self.db.execute("INSERT INTO habits(title,unit,daily_goal,weekly_goal,goal_period,parent_id) VALUES (?,?,?,?,?,?)",
+                                   (title, unit, daily_goal, weekly_goal, goal_period, parent_id)).lastrowid
+
+    def edit_habit(self, habit_id, title, unit, daily_goal, weekly_goal, goal_period="day", parent_id=None):
+        self.validate_habit(unit, daily_goal, weekly_goal, goal_period, parent_id, habit_id)
+        with self.change():
+            self.db.execute("UPDATE habits SET title=?,unit=?,daily_goal=?,weekly_goal=?,goal_period=?,parent_id=? WHERE id=?",
+                            (title, unit, daily_goal, weekly_goal, goal_period, parent_id, habit_id))
+
+    def habit_counts(self, habit_id, *, planned=None):
+        """Sum direct entries and descendants without copying or double crediting."""
+        return {r["day"]: r["amount"] for r in self.rows("""
+            WITH RECURSIVE family(id) AS (
+                SELECT id FROM habits WHERE id=? UNION ALL
+                SELECT h.id FROM habits h JOIN family f ON h.parent_id=f.id)
+            SELECT day,SUM(amount) AS amount FROM checkins
+            WHERE habit_id IN (SELECT id FROM family) AND (? IS NULL OR planned=?) GROUP BY day
+        """, (habit_id, planned, planned))}
+
+    def set_checkin(self, habit_id, day, amount):
+        date.fromisoformat(day)
+        if not isinstance(amount, int) or amount < 0:
+            raise ValueError("Amount must be a nonnegative whole number.")
+        with self.change():
+            self.db.execute("INSERT INTO checkins(habit_id,day,amount,planned) VALUES (?,?,?,?) ON CONFLICT(habit_id,day) DO UPDATE SET amount=excluded.amount,planned=excluded.planned",
+                            (habit_id, day, amount, day > date.today().isoformat()))
 
     def _increment(self, habit_id, day, amount):
         if amount >= 0:
-            self.db.execute("""INSERT INTO checkins VALUES (?,?,?) ON CONFLICT(habit_id,day)
-                            DO UPDATE SET amount=amount+excluded.amount""", (habit_id, day, amount))
+            self.db.execute("""INSERT INTO checkins(habit_id,day,amount,planned) VALUES (?,?,?,?) ON CONFLICT(habit_id,day)
+                            DO UPDATE SET amount=amount+excluded.amount,planned=excluded.planned""",
+                            (habit_id, day, amount, day > date.today().isoformat()))
         else:
-            self.db.execute("UPDATE checkins SET amount=MAX(0,amount+?) WHERE habit_id=? AND day=?", (amount, habit_id, day))
+            self.db.execute("UPDATE checkins SET amount=MAX(0,amount+?),planned=? WHERE habit_id=? AND day=?",
+                            (amount, day > date.today().isoformat(), habit_id, day))
 
     def checkin(self, habit_id, day, amount):
         with self.change():
@@ -152,7 +276,7 @@ class Store(LearningStore):
 
     def export(self):
         return json.dumps({"version": 2, **{t: self.rows(f"SELECT * FROM {t}") for t in
-                          ("books", "chapters", "habits", "checkins", "bullets", *LEARNING_TABLES)}}, indent=2, ensure_ascii=False)
+                          ("books", "chapters", "habits", "checkins", "bullets", "sidebar_preferences", *LEARNING_TABLES)}}, indent=2, ensure_ascii=False)
 
     def seed_demo(self):
         book = self.add_book("Linear Algebra", ["Systems of equations", "Row reduction", "Vector spaces", "Linear independence", "Bases and dimension", "Linear maps", "Eigenvalues", "Inner products"], True)

@@ -178,7 +178,7 @@ class LearningUI:
         self.query_one("#library-title", Label).update("Learning paths" if paths else "Skills & topics")
         self.query_one("#add-item", Button).label = "+ Path" if paths else "+ Skill"
         if paths:
-            items = self.store.rows("SELECT * FROM paths ORDER BY id")
+            items = self.store.sidebar_items("paths")
             rows = []
             for path in items:
                 nodes, children, states = self.store.learning_snapshot(path["id"])
@@ -188,7 +188,7 @@ class LearningUI:
                 rows.append((path["id"], [progress]))
             self.path_id = self.fill("#items", rows, self.path_id)
         else:
-            items = self.store.rows("SELECT * FROM skills WHERE active=1 ORDER BY level DESC,id")
+            items = self.store.sidebar_items("skills")
             rows = [(s["id"], [Text(s["title"] + "\n") + Text(
                 "■ " * s["level"] + "□ " * (3-s["level"]) + " · " + LEVELS[s["level"]],
                 style=SKILL_COLORS[s["level"]])]) for s in items]

@@ -72,3 +72,19 @@ Form, Help, ReadingPanel, ImportPreview, VisualPanel { align: center middle; bac
 #dialog .buttons { margin-top: 1; }
 #form-error { color: #efb094; }
 #close-help { margin-top: 1; }
+#form-fields { height: auto; scrollbar-size: 1 1; }
+.habit-form #dialog { height: 90%; }
+.habit-form #form-fields { height: 1fr; }
+.habit-form #dialog Input { margin-bottom: 0; }
+#habit-nav Button { min-width: 4; width: 1fr; }
+.compact #habit-detail > .buttons { layout: grid; grid-size: 2; grid-columns: 1fr 1fr; height: auto; grid-rows: 3; }
+.compact #habit-detail > .buttons Button { min-width: 6; width: 1fr; }
+#days-per-week { height: auto; }
+#goal-preview { color: #a6dace; margin: 1 0; }
+#sidebar-sort { margin-top: 1; }
+#sidebar-order { height: 3; }
+#sidebar-order Button { min-width: 5; width: 1fr; }
+SidebarOptions { align: center middle; background: #08111bb0; }
+SidebarOptions #dialog { width: 48; }
+SidebarOptions #dialog Static { margin: 1 0; }
+#library .panel-heading #sidebar-options { width: 3; min-width: 3; }
