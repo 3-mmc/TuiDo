@@ -7,9 +7,10 @@ from pathlib import Path
 import sqlite3
 
 from .learning import LEARNING_TABLES, LearningStore
+from .projects import PROJECT_TABLES, SIDEBARS, ProjectStore
 
 
-class Store(LearningStore):
+class Store(ProjectStore, LearningStore):
     def __init__(self, path: str | Path):
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -41,6 +42,7 @@ class Store(LearningStore):
                 habit_id INTEGER REFERENCES habits(id) ON DELETE SET NULL);
         """)
         self.init_learning()
+        self.init_projects()
         columns = {r["name"] for r in self.db.execute("PRAGMA table_info(habits)")}
         if "goal_period" not in columns:
             self.db.execute("ALTER TABLE habits ADD COLUMN goal_period TEXT NOT NULL DEFAULT 'day' CHECK(goal_period IN ('day','week'))")
@@ -48,7 +50,7 @@ class Store(LearningStore):
             self.db.execute("ALTER TABLE habits ADD COLUMN parent_id INTEGER REFERENCES habits(id) ON DELETE SET NULL")
         if "planned" not in {r["name"] for r in self.db.execute("PRAGMA table_info(checkins)")}:
             self.db.execute("ALTER TABLE checkins ADD COLUMN planned INTEGER NOT NULL DEFAULT 0 CHECK(planned IN (0,1))")
-        for table in ("books", "habits", "paths", "skills"):
+        for table in SIDEBARS:
             if "sidebar_position" not in {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}:
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN sidebar_position INTEGER")
         self.db.execute("CREATE TABLE IF NOT EXISTS sidebar_preferences (collection TEXT PRIMARY KEY, sort TEXT NOT NULL)")
@@ -60,7 +62,7 @@ class Store(LearningStore):
 
     @staticmethod
     def sidebar_sorts(table):
-        if table not in {"books", "habits", "paths", "skills"}:
+        if table not in SIDEBARS:
             raise ValueError("Unknown sidebar")
         return ["custom", "name", "name-desc", "oldest", "newest"] + (["level"] if table == "skills" else [])
 
@@ -79,9 +81,14 @@ class Store(LearningStore):
     def _set_sidebar_sort(self, table, sort):
         self.db.execute("INSERT INTO sidebar_preferences VALUES (?,?) ON CONFLICT(collection) DO UPDATE SET sort=excluded.sort", (table, sort))
 
-    def sidebar_items(self, table):
+    def sidebar_items(self, table, filtered=True):
+        """Sorted items, narrowed to the pinned focus and chosen shelf when filtered."""
         sort = self.sidebar_sort(table)
         items = self.rows(f"SELECT * FROM {table}" + (" WHERE active=1" if table == "skills" else ""))
+        if filtered:
+            view = self.view()
+            items = [row for row in items if (row["pinned"] or not view["focus"])
+                     and (view["shelf"] is None or row["shelf_id"] == view["shelf"])]
         keys = {
             "custom": lambda row: (row["sidebar_position"] is None, row["sidebar_position"] or 0, row["id"]),
             "name": lambda row: (row["title"].casefold(), row["id"]),
@@ -92,13 +99,15 @@ class Store(LearningStore):
         items.sort(key=keys[sort], reverse=sort == "name-desc")
         if table != "habits":
             return items
+        # A child whose parent is filtered out shows at the top level.
+        shown = {item["id"] for item in items}
         children = {}
         for item in items:
-            children.setdefault(item["parent_id"], []).append(item)
+            children.setdefault(item["parent_id"] if item["parent_id"] in shown else None, []).append(item)
         ordered = []
         def walk(parent, depth):
             for item in children.get(parent, []):
-                ordered.append({**item, "sidebar_depth": depth})
+                ordered.append({**item, "sidebar_depth": depth, "sidebar_parent": parent})
                 walk(item["id"], depth + 1)
         walk(None, 0)
         return ordered
@@ -111,11 +120,12 @@ class Store(LearningStore):
         item = next((row for row in items if row["id"] == item_id), None)
         if item is None:
             return False
-        siblings = [row for row in items if table != "habits" or row["parent_id"] == item["parent_id"]]
+        siblings = [row for row in items if table != "habits" or row["sidebar_parent"] == item["sidebar_parent"]]
         index = next(i for i, row in enumerate(siblings) if row["id"] == item_id)
         if not 0 <= index + direction < len(siblings):
             return False
-        positions = {row["id"]: i for i, row in enumerate(items)}
+        # Swap with the visible neighbour, keeping hidden items' places.
+        positions = {row["id"]: i for i, row in enumerate(self.sidebar_items(table, filtered=False))}
         neighbor = siblings[index + direction]["id"]
         positions[item_id], positions[neighbor] = positions[neighbor], positions[item_id]
         with self.change():
@@ -136,12 +146,16 @@ class Store(LearningStore):
             return False
         # Backup writes restored pages to the actual file; deserialize alone would
         # detach this connection from its on-disk database.
+        settings = self.rows("SELECT * FROM settings")
         restored = sqlite3.connect(":memory:")
         try:
             restored.deserialize(self._undo.pop())
             restored.backup(self.db)
         finally:
             restored.close()
+        with self.db:
+            self.db.execute("DELETE FROM settings")
+            self.db.executemany("INSERT INTO settings VALUES (?,?)", [(r["key"], r["value"]) for r in settings])
         return True
 
     def add_book(self, title, chapters, textbook=False):
@@ -226,11 +240,11 @@ class Store(LearningStore):
         with self.change():
             self._increment(habit_id, day, amount)
 
-    def add_bullet(self, day, text, chapter_id=None, habit_id=None, activity_id=None):
+    def add_bullet(self, day, text, chapter_id=None, habit_id=None, activity_id=None, project_task_id=None):
         note = text.startswith("- ")
         with self.change():
-            return self.db.execute("INSERT INTO bullets(day,text,note,chapter_id,habit_id,activity_id) VALUES (?,?,?,?,?,?)",
-                                   (day, text[2:] if note else text, note, chapter_id, habit_id, activity_id)).lastrowid
+            return self.db.execute("INSERT INTO bullets(day,text,note,chapter_id,habit_id,activity_id,project_task_id) VALUES (?,?,?,?,?,?,?)",
+                                   (day, text[2:] if note else text, note, chapter_id, habit_id, activity_id, project_task_id)).lastrowid
 
     def toggle_bullet(self, bullet_id):
         bullet = self.rows("SELECT * FROM bullets WHERE id=?", (bullet_id,))[0]
@@ -247,6 +261,8 @@ class Store(LearningStore):
                     self.db.execute("UPDATE chapters SET reading=2 WHERE id=?", (bullet["chapter_id"],))
                 if bullet["habit_id"]:
                     self._increment(bullet["habit_id"], bullet["day"], 1)
+                if bullet["project_task_id"]:
+                    self._complete_task(bullet["project_task_id"], bullet["day"])
                 self.db.execute("UPDATE bullets SET credited=1 WHERE id=?", (bullet_id,))
 
     def migrate(self, bullet_id, target_day):
@@ -255,18 +271,19 @@ class Store(LearningStore):
             return False
         with self.change():
             self.db.execute("UPDATE bullets SET migrated=1 WHERE id=?", (bullet_id,))
-            self.db.execute("INSERT INTO bullets(day,text,chapter_id,habit_id,activity_id,credited) VALUES (?,?,?,?,?,?)",
-                            (target_day, bullet["text"], bullet["chapter_id"], bullet["habit_id"], bullet["activity_id"], bullet["credited"]))
+            self.db.execute("INSERT INTO bullets(day,text,chapter_id,habit_id,activity_id,project_task_id,credited) VALUES (?,?,?,?,?,?,?)",
+                            (target_day, bullet["text"], bullet["chapter_id"], bullet["habit_id"], bullet["activity_id"],
+                             bullet["project_task_id"], bullet["credited"]))
         return True
 
     def delete(self, table, item_id):
-        if table not in {"books", "chapters", "habits", "bullets", "paths", "skills"}:
+        if table not in {"books", "chapters", "habits", "bullets", "paths", "skills", "projects", "project_tasks", "shelves", "ideas"}:
             raise ValueError("Unknown collection")
         with self.change():
             self.db.execute(f"DELETE FROM {table} WHERE id=?", (item_id,))
 
     def rename(self, table, item_id, title):
-        if table not in {"books", "chapters", "habits", "bullets", "paths", "activities", "skills"}:
+        if table not in {"books", "chapters", "habits", "bullets", "paths", "activities", "skills", "projects", "project_tasks", "shelves", "ideas"}:
             raise ValueError("Unknown collection")
         column = "text" if table == "bullets" else "title"
         with self.change():
@@ -275,8 +292,9 @@ class Store(LearningStore):
                 self.db.execute("UPDATE resources SET title=? WHERE book_id=?", (title, item_id))
 
     def export(self):
-        return json.dumps({"version": 2, **{t: self.rows(f"SELECT * FROM {t}") for t in
-                          ("books", "chapters", "habits", "checkins", "bullets", "sidebar_preferences", *LEARNING_TABLES)}}, indent=2, ensure_ascii=False)
+        return json.dumps({"version": 3, **{t: self.rows(f"SELECT * FROM {t}") for t in
+                          ("books", "chapters", "habits", "checkins", "bullets", "sidebar_preferences", *LEARNING_TABLES, *PROJECT_TABLES)}},
+                          indent=2, ensure_ascii=False)
 
     def seed_demo(self):
         book = self.add_book("Linear Algebra", ["Systems of equations", "Row reduction", "Vector spaces", "Linear independence", "Bases and dimension", "Linear maps", "Eigenvalues", "Inner products"], True)
@@ -303,6 +321,25 @@ class Store(LearningStore):
         self.add_bullet((today - timedelta(days=1)).isoformat(), "Pick up library holds")
         from .demo import DEMO_SYLLABUS
         self.import_syllabus(DEMO_SYLLABUS)
+        home = self.add_shelf("Home")
+        chores = self.add_project("Home", "An ongoing area: chores come back round, nothing is overdue.")
+        self.set_shelf("projects", chores, home)
+        laundry = self.add_task(chores, "Laundry", every_days=7)
+        self.add_task(chores, "Water the plants", every_days=3)
+        self.add_task(chores, "Change the bed sheets", every_days=14)
+        self.add_task(chores, "Fix the wobbly shelf")
+        thesis = self.add_project("Thesis chapter 2", "Done means a draft my supervisor can read.")
+        outline = self.add_task(thesis, "Outline")
+        for title in ("List the three main arguments", "Find one source per argument", "Order the sections"):
+            self.add_task(thesis, title, outline)
+        self.add_task(thesis, "Write the messy first draft")
+        self.add_task(thesis, "Send to supervisor")
+        self.toggle_pin("projects", thesis)
+        self.add_idea("Learn to bake sourdough", "Saw a starter guide. Maybe in winter.")
+        self.add_idea("Map the family's Kharkiv addresses", "Could be a nice small website.")
+        with self.db:
+            self.db.execute("UPDATE project_tasks SET last_done=? WHERE id=?", ((today - timedelta(days=9)).isoformat(), laundry))
+            self.db.execute("UPDATE project_tasks SET status=2 WHERE project_id=? AND title='List the three main arguments'", (thesis,))
         self._undo.clear()
 
     def close(self):

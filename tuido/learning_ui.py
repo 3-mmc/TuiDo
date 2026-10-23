@@ -175,28 +175,29 @@ class LearningUI:
 
     def refresh_learning_list(self):
         paths = self.mode == "paths"
-        self.query_one("#library-title", Label).update("Learning paths" if paths else "Skills & topics")
+        self.query_one("#library-title", Label).update(self.sidebar_title("Learning paths" if paths else "Skills & topics"))
         self.query_one("#add-item", Button).label = "+ Path" if paths else "+ Skill"
         if paths:
             items = self.store.sidebar_items("paths")
             rows = []
             for path in items:
                 nodes, children, states = self.store.learning_snapshot(path["id"])
-                progress = Text(path["title"] + "\n")
+                progress = Text(self.pin_title(path) + "\n")
                 for node_id in children.get(None, []):
                     progress.append(("□", "◧", "■")[states[node_id]] + " ", style=COLORS[states[node_id]])
                 rows.append((path["id"], [progress]))
             self.path_id = self.fill("#items", rows, self.path_id)
         else:
             items = self.store.sidebar_items("skills")
-            rows = [(s["id"], [Text(s["title"] + "\n") + Text(
+            rows = [(s["id"], [Text(self.pin_title(s) + "\n") + Text(
                 "■ " * s["level"] + "□ " * (3-s["level"]) + " · " + LEVELS[s["level"]],
                 style=SKILL_COLORS[s["level"]])]) for s in items]
             self.skill_id = self.fill("#items", rows, self.skill_id)
         self.query_one("#items").display = bool(items)
         self.query_one("#library-empty").display = not items
-        self.query_one("#library-empty", Static).update("Add a path or import an agent's syllabus." if paths else "Add skills to a path, or import a syllabus with skill milestones.")
-        self.query_one("#overview", Static).update(f'{len(items)} {"paths" if paths else "skills"}')
+        self.query_one("#library-empty", Static).update(self.empty_sidebar(
+            "Add a path or import an agent's syllabus." if paths else "Add skills to a path, or import a syllabus with skill milestones."))
+        self.overview(f'{len(items)} {"paths" if paths else "skills"}')
 
     def refresh_learning_detail(self):
         if self.mode == "skills":
@@ -292,6 +293,7 @@ class LearningUI:
             def save(values):
                 if values:
                     self.path_id = self.store.add_path(values["title"], values["description"])
+                    self.store.adopt_view("paths", self.path_id)
                     self.refresh_desk()
             self.push_screen(Form("Add a learning path", [("title", "Path title", "", False), ("description", "What do you want to understand or do?", "", True)]), save)
         else:
@@ -302,6 +304,7 @@ class LearningUI:
             def save(values):
                 if values:
                     self.skill_id = self.store.add_skill(values["path"], values["title"])
+                    self.store.adopt_view("skills", self.skill_id)
                     self.refresh_desk()
             self.push_screen(Form("Add a skill or topic", [("title", "Skill", "", False)], choices={"path": ("Learning path", [(p["title"], p["id"]) for p in paths], paths[0]["id"])}), save)
 

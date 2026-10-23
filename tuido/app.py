@@ -11,6 +11,7 @@ from textual.widgets import Button, Checkbox, DataTable, Footer, Input, Label, S
 
 from .store import Store
 from .learning_ui import LearningUI
+from .projects_ui import ProjectsUI
 
 
 class WrappingTable(DataTable):
@@ -187,26 +188,41 @@ class HabitForm(Form):
 class SidebarOptions(ModalScreen):
     BINDINGS = [("escape", "dismiss", "Close")]
 
-    def __init__(self, collection, sorts, current, title, can_up, can_down):
+    def __init__(self, collection, sorts, current, title, can_up, can_down, *, pinned=False, view=None, shelves=(), previews=None):
         super().__init__()
+        self.previews = previews
         self.collection, self.sorts, self.current = collection, sorts, current
         self.title, self.can_up, self.can_down = title, can_up, can_down
+        self.pinned, self.view, self.shelves = pinned, view or {"focus": False, "shelf": None}, shelves
 
     def compose(self):
         labels = {"custom": "Custom order", "name": "Name A–Z", "name-desc": "Name Z–A",
                   "oldest": "Oldest first", "newest": "Newest first", "level": "Skill level"}
-        with Vertical(id="dialog"):
+        with VerticalScroll(id="dialog"):
             yield Label(f"{self.collection.capitalize()} · options", classes="dialog-title")
             yield Label("Sort list")
             yield Select([(labels[key], key) for key in self.sorts], value=self.current,
                          allow_blank=False, id="sidebar-sort")
-            yield Static(Text(f"Move: {self.title}" if self.title else "Select an item to move it."))
+            yield Static(Text(f"Selected: {self.title}" if self.title else "Select an item to move, pin, or shelve it."))
             with Horizontal(id="sidebar-order"):
                 yield Button("↑ Up", id="move-up", disabled=not self.can_up)
                 yield Button("↓ Down", id="move-down", disabled=not self.can_down)
+                yield Button("☆ Unpin" if self.pinned else "★ Pin", id="pin-item", disabled=not self.title)
+                yield Button("Shelf…", id="shelve-item", disabled=not self.title)
             yield Static("Parents move with their children. Children move among siblings."
                          if self.collection == "habits" else "Moving an item saves a custom order.")
-            yield Button("Close", id="close-options")
+            if self.previews is not None:
+                yield Checkbox("Show next step under each project" if self.collection == "projects"
+                               else "Show notes under each idea", self.previews, id="sidebar-previews")
+            yield Label("Show, in every tab")
+            with Horizontal(id="sidebar-view"):
+                yield Select([("Everything", False), ("★ Focus only", True)], value=self.view["focus"],
+                             allow_blank=False, id="view-focus")
+                yield Select([("All shelves", 0)] + [(s["title"], s["id"]) for s in self.shelves],
+                             value=self.view["shelf"] or 0, allow_blank=False, id="view-shelf")
+            with Horizontal(classes="buttons"):
+                yield Button("Shelves…", id="manage-shelves")
+                yield Button("Close", id="close-options")
 
     def on_mount(self):
         self.query_one("#sidebar-sort").focus()
@@ -217,11 +233,32 @@ class SidebarOptions(ModalScreen):
         if event.value in self.sorts and event.value != self.current:
             self.dismiss(("sort", event.value))
 
+    @on(Checkbox.Changed, "#sidebar-previews")
+    def choose_previews(self, event):
+        event.stop()
+        self.dismiss(("previews", event.value))
+
+    @on(Select.Changed, "#view-focus")
+    def choose_focus(self, event):
+        event.stop()
+        if event.value != self.view["focus"]:
+            self.dismiss(("focus", event.value))
+
+    @on(Select.Changed, "#view-shelf")
+    def choose_shelf(self, event):
+        event.stop()
+        if event.value != (self.view["shelf"] or 0):
+            self.dismiss(("view-shelf", event.value))
+
     @on(Button.Pressed)
     def choose_action(self, event):
         event.stop()
         direction = {"move-up": -1, "move-down": 1}.get(event.button.id)
-        self.dismiss(("move", direction) if direction else None)
+        if direction:
+            self.dismiss(("move", direction))
+        else:
+            self.dismiss({"pin-item": ("pin", None), "shelve-item": ("shelve", None),
+                          "manage-shelves": ("manage", None)}.get(event.button.id))
 
 
 class Help(ModalScreen):
@@ -239,16 +276,21 @@ class Help(ModalScreen):
                 "p                 Put the selected chapter in Today\n"
                 "a                 Add to the focused column\n"
                 "r / Rename button Rename the selected item in that pane\n"
-                "Alt+Up/Down       Reorder selected sidebar item (also in ⋯ options)\n"
+                "Alt+Up/Down       Reorder selected sidebar item or project step\n"
+                "Alt+Left/Right    Lift a step out / nest it under the step above\n"
                 "Delete            Delete selected item (Ctrl+Z to undo)\n"
                 "+ / -             Add / subtract one habit unit on selected date\n"
                 "Ctrl+J            Jot a task (prefix '- ' for a note)\n"
                 "Ctrl+T            Show / hide the daily pane\n"
-                "F1 / F2 / F3 / F4 Paths / Library / Habits / Skills\n"
+                "F1 … F6           Paths / Library / Habits / Skills / Projects / Ideas\n"
+                "*                 Pin the selected sidebar item for focus\n"
+                "f                 Focus: show only pinned items, in every tab\n"
+                "s                 Put the selected sidebar item on a shelf\n"
+                "d                 Show / hide idea notes or project next steps\n"
                 "Ctrl+O            Preview and import a syllabus JSON file\n"
-                "c                 Add a child inside the selected module\n"
-                "n                 Continue the next ready required activity\n"
-                "i / v             Inspect notes / open syllabus diagrams\n"
+                "c                 Add a child module item, or a project subtask\n"
+                "n                 Continue a path, or jump to a project's next step\n"
+                "i / v             Inspect notes (edit a step) / open syllabus diagrams\n"
                 "Ctrl+Left/Right   Browse habit and journal dates\n"
                 "Ctrl+Y            Carry selected unfinished bullet to today\n"
                 "Ctrl+Z            Undo last change (up to 50 this session)\n"
@@ -260,6 +302,10 @@ class Help(ModalScreen):
                 "Planning a chapter can link it to a habit. Completing the bullet\n"
                 "finishes the reading and logs one habit unit in one undoable step.\n"
                 "Reopening it keeps that progress; use Undo to reverse the action.\n\n"
+                "Projects hold steps and subtasks. Chores repeat: after you do\n"
+                "one it rests for its interval, then comes back round. Nothing\n"
+                "is ever overdue. Shelves and focus hide everything else.\n"
+                "Ideas are maybes, not to-dos: take one up as a project or step.\n\n"
                 "Habits support daily amounts or weekly totals on any days.\n"
                 "Child habits contribute to their parent. Future entries are plans.\n"
                 "Use Edit habit for goals, Set amount for corrections, Date to jump."
@@ -271,7 +317,7 @@ class Help(ModalScreen):
         self.dismiss()
 
 
-class Tuido(LearningUI, App):
+class Tuido(LearningUI, ProjectsUI, App):
     TITLE = "Tuido"
     CSS_PATH = "desk.tcss"
     BINDINGS = [
@@ -280,6 +326,14 @@ class Tuido(LearningUI, App):
         Binding("f2", "books", "Library"),
         Binding("f3", "habits", "Habits"),
         Binding("f4", "skills", "Skills"),
+        Binding("f5", "projects", "Projects"),
+        Binding("f6", "ideas", "Ideas", show=False),
+        Binding("alt+left", "outdent", "Outdent", show=False),
+        Binding("alt+right", "indent", "Indent", show=False),
+        Binding("f", "focus_mode", "Focus"),
+        Binding("asterisk", "pin", "Pin", show=False),
+        Binding("s", "shelve", "Shelf", show=False),
+        Binding("d", "previews", "Previews", show=False),
         Binding("ctrl+o", "import", "Import", show=False),
         Binding("i", "inspect", "Details", show=False),
         Binding("v", "visual", "Visuals", show=False),
@@ -313,7 +367,11 @@ class Tuido(LearningUI, App):
         self.habit_id = None
         self.path_id = None
         self.skill_id = None
+        self.project_id = None
+        self.idea_id = None
         self.collapsed = set()
+        self.collapsed_tasks = set()
+        self.task_nodes = {}
         self.learning_nodes = {}
         self.journal_day = date.today()
         self.last_today = date.today()
@@ -328,6 +386,8 @@ class Tuido(LearningUI, App):
             yield Button("Library", id="show-books", variant="primary")
             yield Button("Habits", id="show-habits")
             yield Button("Skills", id="show-skills")
+            yield Button("Projects", id="show-projects")
+            yield Button("Ideas", id="show-ideas")
             yield Static("", id="overview")
             yield Button("Today", id="show-today")
         with Horizontal(id="desk"):
@@ -347,6 +407,7 @@ class Tuido(LearningUI, App):
                 yield Static("", id="progress")
                 yield DataTable(id="chapters", cursor_type="row", show_row_labels=False)
                 yield WrappingTable(id="syllabus", cursor_type="row", show_header=False, show_row_labels=False)
+                yield WrappingTable(id="tasks", cursor_type="row", show_header=False, show_row_labels=False)
                 with VerticalScroll(id="skills-detail"):
                     with Horizontal(id="skill-header"):
                         yield Static("", id="skill-art")
@@ -376,6 +437,19 @@ class Tuido(LearningUI, App):
                     yield Button("+ Activity", id="add-activity")
                     yield Button("Continue", id="continue-path")
                     yield Button("Visuals", id="view-visual")
+                yield Static("", id="project-info", classes="hint")
+                with Horizontal(id="project-actions", classes="buttons"):
+                    yield Button("+ Step", id="add-task")
+                    yield Button("+ Subtask", id="add-subtask")
+                    yield Button("Next step", id="next-step")
+                    yield Button("Plan today", id="plan-task")
+                    yield Button("Edit", id="edit-task")
+                with VerticalScroll(id="idea-detail"):
+                    yield Static("", id="idea-notes")
+                with Horizontal(id="idea-actions", classes="buttons"):
+                    yield Button("Edit", id="edit-idea")
+                    yield Button("Start as project", id="idea-project", variant="primary")
+                    yield Button("Add as a step…", id="idea-step")
                 with Horizontal(id="chapter-actions", classes="buttons"):
                     yield Button("+ Chapter", id="add-chapter")
                     yield Button("Plan today", id="plan-chapter")
@@ -416,7 +490,8 @@ class Tuido(LearningUI, App):
         self.query_one("#journal").display = show_today
         self.set_class(width < 110, "compact")
         self.query_one("#library").display = not (width < 75 and show_today)
-        self.query_one("#show-today", Button).label = "Hide today" if show_today else "Show today"
+        self.query_one("#show-today", Button).label = "Today" if width < 110 else "Hide today" if show_today else "Show today"
+        self.query_one("#show-today", Button).variant = "primary" if show_today and width < 110 else "default"
 
     def check_date(self):
         today = date.today()
@@ -436,7 +511,7 @@ class Tuido(LearningUI, App):
         table = self.query_one(selector, DataTable)
         selected = selected if selected is not None else self.row_id(table)
         with self.prevent(DataTable.RowHighlighted):
-            wrapped = selector in {"#items", "#bullets", "#syllabus"}
+            wrapped = selector in {"#items", "#bullets", "#syllabus", "#tasks"}
             table.clear(columns=wrapped)
             if wrapped:
                 table.wrapped_rows = rows
@@ -445,8 +520,8 @@ class Tuido(LearningUI, App):
                 # width/height feedback loop when long rows start wrapping.
                 available = max(1, table.size.width - table.styles.scrollbar_size_vertical)
                 padding = 2 * table.cell_padding
-                if selector == "#syllabus":
-                    kind_width = min(8, max(1, available - 5))
+                if selector in {"#syllabus", "#tasks"}:
+                    kind_width = min(8 if selector == "#syllabus" else 18, max(1, available - 5))
                     table.add_column("Activity", width=max(1, available - kind_width - 2 * padding))
                     table.add_column("Type", width=kind_width)
                 else:
@@ -460,13 +535,13 @@ class Tuido(LearningUI, App):
         return self.row_id(table)
 
     def detail_selection(self):
-        return {"paths": "syllabus", "books": "chapters", "habits": "items", "skills": "items"}[self.mode]
+        return {"paths": "syllabus", "books": "chapters", "habits": "items", "skills": "items", "projects": "tasks", "ideas": "items"}[self.mode]
 
     def refresh_rename_controls(self):
-        names = {"paths": "path", "books": "book", "habits": "habit", "skills": "skill"}
+        names = {"paths": "path", "books": "book", "habits": "habit", "skills": "skill", "projects": "project", "ideas": "idea"}
         for button_id, selector, name in (
             ("rename-item", "items", names[self.mode]),
-            ("rename-detail", self.detail_selection(), {"paths": "activity or module", "books": "chapter"}.get(self.mode, names[self.mode])),
+            ("rename-detail", self.detail_selection(), {"paths": "activity or module", "books": "chapter", "projects": "step"}.get(self.mode, names[self.mode])),
             ("rename-bullet", "bullets", "journal task or note"),
         ):
             button = self.query_one(f"#{button_id}", Button)
@@ -480,22 +555,23 @@ class Tuido(LearningUI, App):
         today = date.today()
         self.query_one("#date", Static).update(today.strftime("%a %d %b %Y") + ("  /  Demo" if self.demo else ""))
         books = self.mode == "books"
-        for mode, button in (("paths", "show-paths"), ("books", "show-books"), ("habits", "show-habits"), ("skills", "show-skills")):
+        for mode, button in (("paths", "show-paths"), ("books", "show-books"), ("habits", "show-habits"),
+                             ("skills", "show-skills"), ("projects", "show-projects"), ("ideas", "show-ideas")):
             self.query_one(f"#{button}", Button).variant = "primary" if self.mode == mode else "default"
         self.query_one("#import-syllabus").display = self.mode == "paths"
-        if self.mode in {"paths", "skills"}:
-            self.refresh_learning_list()
+        if self.mode in {"paths", "skills", "projects", "ideas"}:
+            {"projects": self.refresh_project_list, "ideas": self.refresh_idea_list}.get(self.mode, self.refresh_learning_list)()
             self.refresh_detail()
             self.refresh_journal()
             return
-        self.query_one("#show-books", Button).variant = "primary" if books else "default"
-        self.query_one("#show-habits", Button).variant = "default" if books else "primary"
-        self.query_one("#library-title", Label).update("Books" if books else "Habits")
+        self.query_one("#library-title", Label).update(self.sidebar_title("Books" if books else "Habits"))
         self.query_one("#add-item", Button).label = "+ Book" if books else "+ Habit"
         if books:
             items = self.store.sidebar_items("books")
-            progress = {b["id"]: Text(b["title"] + "\n") for b in items}
+            progress = {b["id"]: Text(self.pin_title(b) + "\n") for b in items}
             for unit in self.store.rows("SELECT book_id,reading FROM chapters ORDER BY book_id,position,id"):
+                if unit["book_id"] not in progress:
+                    continue
                 state = unit["reading"]
                 progress[unit["book_id"]].append(
                     ("□", "◧", "■")[state] + " ",
@@ -508,7 +584,7 @@ class Tuido(LearningUI, App):
             rows = []
             for habit in items:
                 depth = habit["sidebar_depth"]
-                progress = Text(("  " * (depth - 1) + "↳ " if depth else "") + habit["title"] + "\n")
+                progress = Text(("  " * (depth - 1) + "↳ " if depth else "") + self.pin_title(habit) + "\n")
                 counts = self.store.habit_counts(habit["id"], planned=False)
                 plans = self.store.habit_counts(habit["id"], planned=True)
                 for offset in range(7):
@@ -524,21 +600,28 @@ class Tuido(LearningUI, App):
                     )
                 rows.append((habit["id"], [progress]))
             self.habit_id = self.fill("#items", rows, self.habit_id)
-        self.query_one("#library-empty", Static).update("Add your first book below." if books else "Add a habit to begin.")
+        self.query_one("#library-empty", Static).update(self.empty_sidebar("Add your first book below." if books else "Add a habit to begin."))
         self.query_one("#library-empty").display = not items
         self.query_one("#items").display = bool(items)
-        self.query_one("#overview", Static).update(f"{len(items)} {'books' if books else 'habits'}")
+        self.overview(f"{len(items)} {'books' if books else 'habits'}")
         self.refresh_detail()
         self.refresh_journal()
 
     def refresh_detail(self):
         books = self.mode == "books"
         learning = self.mode in {"paths", "skills"}
+        projects = self.mode == "projects"
+        ideas = self.mode == "ideas"
+        self.query_one("#idea-detail").display = ideas
+        self.query_one("#idea-actions").display = ideas
+        self.query_one("#tasks").display = projects
+        self.query_one("#project-info").display = projects
+        self.query_one("#project-actions").display = projects
         self.query_one("#syllabus").display = self.mode == "paths"
         self.query_one("#skills-detail").display = self.mode == "skills"
         self.query_one("#learning-info").display = self.mode == "paths"
         self.query_one("#learning-actions").display = self.mode == "paths"
-        self.query_one("#detail-hint").display = not learning
+        self.query_one("#detail-hint").display = not (learning or projects or ideas)
         self.query_one("#chapters").display = books
         self.query_one("#chapter-actions").display = books
         self.query_one("#habit-detail").display = self.mode == "habits"
@@ -546,6 +629,12 @@ class Tuido(LearningUI, App):
         self.query_one("#detail-empty").display = False
         if learning:
             self.refresh_learning_detail()
+            return
+        if projects:
+            self.refresh_project_detail()
+            return
+        if ideas:
+            self.refresh_idea_detail()
             return
         if books:
             matches = self.store.rows("SELECT * FROM books WHERE id=?", (self.book_id,))
@@ -636,7 +725,7 @@ class Tuido(LearningUI, App):
         for bullet in bullets:
             marker = "–" if bullet["note"] else "›" if bullet["migrated"] else "×" if bullet["done"] else "•"
             text = Text(f'{marker} {bullet["text"]}', style="#8296aa" if bullet["done"] or bullet["migrated"] else "#dbe6ef")
-            if bullet["chapter_id"] or bullet["habit_id"] or bullet["activity_id"]:
+            if bullet["chapter_id"] or bullet["habit_id"] or bullet["activity_id"] or bullet["project_task_id"]:
                 text.append(" ↗", style="#74c5b2")
             rows.append((bullet["id"], [text]))
         self.fill("#bullets", rows)
@@ -659,6 +748,10 @@ class Tuido(LearningUI, App):
             self.habit_id = int(event.row_key.value)
         elif self.mode == "paths":
             self.path_id = int(event.row_key.value)
+        elif self.mode == "projects":
+            self.project_id = int(event.row_key.value)
+        elif self.mode == "ideas":
+            self.idea_id = int(event.row_key.value)
         else:
             self.skill_id = int(event.row_key.value)
         self.refresh_rename_controls()
@@ -671,10 +764,16 @@ class Tuido(LearningUI, App):
                 self.query_one("#chapters").focus()
             elif self.mode == "paths":
                 self.query_one("#syllabus").focus()
+            elif self.mode == "projects":
+                self.query_one("#tasks").focus()
+            elif self.mode == "ideas":
+                self.edit_idea()
             elif self.mode == "skills":
                 self.edit_skill()
         elif event.data_table.id == "syllabus":
             self.activate_activity()
+        elif event.data_table.id == "tasks":
+            self.activate_task()
         elif event.data_table.id == "chapters":
             self.advance_chapter()
         elif event.data_table.id == "bullets":
@@ -684,6 +783,11 @@ class Tuido(LearningUI, App):
     def button(self, event):
         actions = {"show-books": self.action_books, "show-habits": self.action_habits,
                    "show-paths": self.action_paths, "show-skills": self.action_skills,
+                   "show-projects": self.action_projects, "add-task": self.add_task,
+                   "add-subtask": lambda: self.add_task(child=True), "next-step": self.next_step,
+                   "plan-task": self.plan_task, "edit-task": self.edit_task,
+                   "show-ideas": self.action_ideas, "edit-idea": self.edit_idea,
+                   "idea-project": self.take_up_idea, "idea-step": lambda: self.take_up_idea(as_step=True),
                    "import-syllabus": self.action_import, "add-activity": self.add_activity,
                    "continue-path": self.action_continue, "view-visual": self.action_visual,
                    "edit-skill": self.edit_skill,
@@ -708,7 +812,7 @@ class Tuido(LearningUI, App):
         selected = self.row_id(self.query_one("#items", DataTable))
         items = self.store.sidebar_items(table)
         item = next((row for row in items if row["id"] == selected), None)
-        siblings = [row["id"] for row in items if table != "habits" or item and row["parent_id"] == item["parent_id"]]
+        siblings = [row["id"] for row in items if table != "habits" or item and row["sidebar_parent"] == item["sidebar_parent"]]
         index = siblings.index(selected) if selected in siblings else -1
         def apply(result):
             if result is None:
@@ -717,18 +821,33 @@ class Tuido(LearningUI, App):
             if action == "sort":
                 self.store.set_sidebar_sort(table, value)
                 self.refresh_desk()
-            else:
+            elif action == "move":
                 self.move_sidebar(value)
+            elif action == "pin":
+                self.action_pin()
+            elif action == "shelve":
+                self.action_shelve()
+            elif action == "manage":
+                self.manage_shelves()
+            elif action == "previews":
+                self.store.set_previews(table, value)
+                self.refresh_desk()
+            else:
+                self.store.set_view(**{"focus" if action == "focus" else "shelf": value})
+                self.refresh_desk()
         self.push_screen(SidebarOptions(
             table, self.store.sidebar_sorts(table), self.store.sidebar_sort(table),
-            item["title"] if item else None, index > 0, 0 <= index < len(siblings) - 1), apply)
+            item["title"] if item else None, index > 0, 0 <= index < len(siblings) - 1,
+            pinned=bool(item and item["pinned"]), view=self.store.view(), shelves=self.store.shelves(),
+            previews=self.store.previews(table) if table in self.store.PREVIEWS else None), apply)
 
     def move_sidebar(self, direction):
         item_id = self.row_id(self.query_one("#items", DataTable))
         if item_id is None:
             return
         if self.store.move_sidebar_item(self.mode, item_id, direction):
-            setattr(self, {"books": "book_id", "habits": "habit_id", "paths": "path_id", "skills": "skill_id"}[self.mode], item_id)
+            setattr(self, {"books": "book_id", "habits": "habit_id", "paths": "path_id", "skills": "skill_id",
+                           "projects": "project_id", "ideas": "idea_id"}[self.mode], item_id)
             self.refresh_desk()
             self.query_one("#items").focus()
             self.status("Order saved. Habit groups move together; children move among siblings. Ctrl+Z undoes this change.")
@@ -736,12 +855,44 @@ class Tuido(LearningUI, App):
             self.status("Already at the edge of this group." if self.mode == "habits" else "Already at the edge of this list.")
 
     def action_move_up(self):
-        if self.focused is not None and self.query_one("#library") in self.focused.ancestors:
+        if getattr(self.focused, "id", None) == "tasks":
+            self.move_task(-1)
+        elif self.focused is not None and self.query_one("#library") in self.focused.ancestors:
             self.move_sidebar(-1)
 
     def action_move_down(self):
-        if self.focused is not None and self.query_one("#library") in self.focused.ancestors:
+        if getattr(self.focused, "id", None) == "tasks":
+            self.move_task(1)
+        elif self.focused is not None and self.query_one("#library") in self.focused.ancestors:
             self.move_sidebar(1)
+
+    def action_indent(self):
+        if getattr(self.focused, "id", None) == "tasks":
+            self.indent_task()
+
+    def action_outdent(self):
+        if getattr(self.focused, "id", None) == "tasks":
+            self.indent_task(outdent=True)
+
+    def action_child(self):
+        if self.mode == "projects":
+            self.add_task(child=True)
+        else:
+            super().action_child()
+
+    def action_continue(self):
+        if self.mode == "projects":
+            self.next_step()
+        else:
+            super().action_continue()
+
+    def action_inspect(self):
+        if self.mode == "projects":
+            self.edit_task()
+        elif self.mode == "ideas":
+            self.edit_idea()
+        else:
+            super().action_inspect()
 
     def action_books(self):
         self.mode = "books"
@@ -770,6 +921,8 @@ class Tuido(LearningUI, App):
             self.add_chapter()
         elif focused == "syllabus":
             self.add_activity()
+        elif focused == "tasks":
+            self.add_task()
         else:
             self.add_item()
 
@@ -777,11 +930,18 @@ class Tuido(LearningUI, App):
         if self.mode in {"paths", "skills"}:
             self.add_learning_item()
             return
+        if self.mode == "projects":
+            self.add_project()
+            return
+        if self.mode == "ideas":
+            self.add_idea()
+            return
         if self.mode == "books":
             def save(values):
                 if values:
                     titles = [line.strip() for line in values["chapters"].splitlines() if line.strip()]
                     self.book_id = self.store.add_book(values["title"], titles, values["textbook"])
+                    self.store.adopt_view("books", self.book_id)
                     self.refresh_desk()
             self.push_screen(Form("Add a book", [("title", "Book title", "", False), ("chapters", "Chapters — one per line (optional)", "", True)], textbook=True), save)
         else:
@@ -805,6 +965,7 @@ class Tuido(LearningUI, App):
                     self.store.edit_habit(habit_id, *args)
                 else:
                     self.habit_id = self.store.add_habit(*args)
+                    self.store.adopt_view("habits", self.habit_id)
                 self.refresh_desk()
         parents = [("No parent", 0)] + [(h["title"], h["id"]) for h in self.store.rows("SELECT * FROM habits ORDER BY id") if h["id"] != habit_id]
         form = HabitForm("Edit habit" if edit else "Add a habit", [
@@ -864,6 +1025,8 @@ class Tuido(LearningUI, App):
             self.action_increment()
         elif focused == "syllabus":
             self.advance_activity()
+        elif focused == "tasks":
+            self.advance_task()
         elif focused == "items" and self.mode == "skills":
             self.edit_skill()
 
@@ -874,6 +1037,9 @@ class Tuido(LearningUI, App):
     def action_plan(self):
         if self.mode == "paths":
             self.plan_activity()
+            return
+        if self.mode == "projects":
+            self.plan_task()
             return
         if self.mode != "books":
             return
@@ -943,7 +1109,8 @@ class Tuido(LearningUI, App):
 
     def selected_record(self, selector=None):
         focused = selector or getattr(self.focused, "id", None)
-        table = {"items": self.mode, "chapters": "chapters", "bullets": "bullets", "syllabus": "activities"}.get(focused)
+        table = {"items": self.mode, "chapters": "chapters", "bullets": "bullets", "syllabus": "activities",
+                 "tasks": "project_tasks"}.get(focused)
         if table:
             return table, self.row_id(self.query_one(f"#{focused}", DataTable))
         return None, None
@@ -962,7 +1129,8 @@ class Tuido(LearningUI, App):
             return
         row = self.store.rows(f"SELECT * FROM {table} WHERE id=?", (item_id,))[0]
         name = {"paths": "path", "activities": "activity", "books": "book", "chapters": "chapter",
-                "habits": "habit", "skills": "skill", "bullets": "task or note"}[table]
+                "habits": "habit", "skills": "skill", "bullets": "task or note", "projects": "project",
+                "project_tasks": "step", "ideas": "idea"}[table]
         def save(values):
             if values:
                 self.store.rename(table, item_id, values["title"])

@@ -50,6 +50,18 @@ For the virtual environment already in this workspace:
   recorded evidence; finishing readings does not automatically claim mastery.
   A seed grows into a flower across the four assessments, with a text label and
   level markers alongside it.
+- **Projects:** long-term projects and ongoing areas, side by side. Steps nest into
+  subtasks; a step with subtasks finishes when they do. Each sidebar entry shows
+  top-level progress and the next one-off step, so you can start without
+  reopening the whole plan. **Chores** (laundry, plants, sheets) repeat: after you
+  do one it rests for its interval, then quietly comes back round. Nothing is ever
+  overdue; chores show how long it has been, not how late you are. Plan any step
+  or chore into Today and check it off there. Alt+Right nests a step under the
+  one above it; Alt+Left lifts it back out. For one-off to-dos that belong
+  nowhere, keep a project called something like *Loose ends*.
+- **Ideas:** maybes, not to-dos. Jot project ideas so they stop circling; they ask
+  nothing of you. When one calls to you, **Start as project** or **Add as a step…**
+  to an existing project. The idea stays in the list, marked as taken up.
 - **Today:** quick tasks and notes in a persistent sidepane. Tomorrow starts a new
   page; older pages remain retrievable. Carry unfinished tasks forward explicitly.
   Plan a syllabus activity or chapter into Today and check it off there to update
@@ -59,6 +71,23 @@ At 110+ columns, the desk has three columns: a list, its contents, and Today.
 Below that, Today starts collapsed. Ctrl+T toggles it. Below 75 columns, showing
 Today temporarily hides the left list so the contents and journal still fit.
 Use a terminal at least 60 columns wide and 24 rows high. No special font is needed.
+
+## Shelves and focus
+
+Every sidebar (Paths, Library, Habits, Skills, Projects, Ideas) can be narrowed to what
+you are working on right now:
+
+- **Pin** an item with `*` (or **★ Pin** in **⋯**). Pinned items show a ★.
+- **Focus** with `f`: every tab shows only pinned items. Press `f` again for
+  everything. Nothing is deleted or archived; the rest just steps out of view.
+- **Shelves** group items across tabs, such as Home, Uni, or Languages. Press `s`
+  to shelve the selected item (or name a new shelf there), then choose a shelf
+  under **⋯ → Show, in every tab** to see only that shelf. **⋯ → Shelves…**
+  renames and deletes shelves; deleting one leaves its items unshelved.
+
+The navigation bar names the active view. Focus and the chosen shelf persist across
+restarts and are left alone by Ctrl+Z. Anything you add while a view is active
+joins it, so new items never vanish on creation.
 
 ## Give an agent your materials
 
@@ -113,17 +142,22 @@ Magic player's reduced-motion behavior. No Node dependency is required by TuiDo.
 
 | Key | Action |
 | --- | --- |
-| F1 / F2 / F3 / F4 | Paths / Library / Habits / Skills |
+| F1 … F6 | Paths / Library / Habits / Skills / Projects / Ideas |
+| `*` | Pin / unpin the selected sidebar item |
+| `f` | Focus: show only pinned items in every tab |
+| `s` | Put the selected sidebar item on a shelf |
+| `d` | Show / hide notes under ideas, or next steps under projects (also in **⋯**) |
 | Tab / Shift+Tab | Move between columns and controls |
 | Up / Down | Select an item |
 | Enter | Expand module / advance activity or chapter / complete task |
 | Space | Advance selected activity or chapter / complete task / log habit unit |
 | `a` | Add to the focused list |
-| `c` | Add a child inside the selected module |
-| `n` | Continue the next ready required activity |
+| `c` | Add a child inside the selected module, or a subtask in a project |
+| `n` | Continue the next ready required activity, or a project's next step |
 | `p` | Plan selected activity or chapter for today |
-| `i` / `v` | Inspect notes / open in-app learning map |
-| Alt+Up / Alt+Down | Move selected sidebar item within its group |
+| `i` / `v` | Inspect notes (edit a project step) / open in-app learning map |
+| Alt+Up / Alt+Down | Move selected sidebar item within its group, or a project step among its siblings |
+| Alt+Left / Alt+Right | Lift a project step out a level / nest it under the step above |
 | `r` / Rename button | Rename the selected item in its pane |
 | Delete | Delete item, or archive activity; Ctrl+Z restores it |
 | `e` | Toggle textbook exercises in Library |

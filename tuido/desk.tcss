@@ -85,6 +85,17 @@ Form, Help, ReadingPanel, ImportPreview, VisualPanel { align: center middle; bac
 #sidebar-order { height: 3; }
 #sidebar-order Button { min-width: 5; width: 1fr; }
 SidebarOptions { align: center middle; background: #08111bb0; }
-SidebarOptions #dialog { width: 48; }
+SidebarOptions #dialog { width: 56; }
 SidebarOptions #dialog Static { margin: 1 0; }
 #library .panel-heading #sidebar-options { width: 3; min-width: 3; }
+#project-info { max-height: 4; }
+#project-actions Button { min-width: 8; }
+.compact #project-actions { layout: grid; grid-size: 3; grid-columns: 1fr 1fr 1fr; grid-rows: 1; grid-gutter: 1 1; height: 3; }
+.compact #project-actions Button { min-width: 6; width: 1fr; }
+#sidebar-view { height: auto; }
+#sidebar-view Select { width: 1fr; }
+ShelfManager { align: center middle; background: #08111bb0; }
+#shelf-list { height: auto; max-height: 12; }
+#idea-detail { height: 1fr; padding-top: 1; }
+#idea-actions Button { min-width: 8; }
+.compact #idea-actions { layout: vertical; height: 9; }
