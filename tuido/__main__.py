@@ -21,6 +21,7 @@ def main():
     operation.add_argument("--list-paths", action="store_true", help="List path IDs and titles")
     operation.add_argument("--example", type=Path, metavar="FILE", help="Write an example syllabus without opening a database")
     parser.add_argument("--apply", action="store_true", help="Apply --import-syllabus after reviewing its preview")
+    parser.add_argument("--canvas", action="store_true", help="Open the desk as one tree you move across, on a canvas")
     parser.add_argument("--output", type=Path, metavar="FILE", help="Output for --export-syllabus or --render-syllabus")
     args = parser.parse_args()
     if args.apply and not args.import_syllabus:
@@ -72,6 +73,9 @@ def main():
                     else:
                         from .visuals import render_path_html
                         write(args.output, render_path_html(store, paths[0]["id"]))
+                elif args.canvas:
+                    from .canvas import run
+                    run(store, None if args.demo else db_path)    # watched for changes made beside it
                 else:
                     from .app import Tuido
                     Tuido(store, demo=args.demo).run()

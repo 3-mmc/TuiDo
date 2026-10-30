@@ -72,6 +72,34 @@ Below that, Today starts collapsed. Ctrl+T toggles it. Below 75 columns, showing
 Today temporarily hides the left list so the contents and journal still fit.
 Use a terminal at least 60 columns wide and 24 rows high. No special font is needed.
 
+## On a canvas
+
+```sh
+uv run tuido --canvas            # or --canvas --demo
+```
+
+The same desk, drawn as one tree you move across with
+[treecanvas](https://github.com/3-mmc/treecanvas): Today and its earlier pages, Paths, Library,
+Habits, Skills, Projects and Ideas branch from the root, each as deep as it goes. Every folder you
+open keeps its place; the camera follows you. Progress shows as boxes (▰ done, ◧ under way), habits
+show this week a box a day, and the pane beside shows notes, sources, what's suggested first, and a
+habit's twelve weeks. Pinned focus and the chosen shelf narrow it as they do the desk.
+
+| key | does |
+| --- | --- |
+| ↑ ↓ → ← | move; → opens |
+| Enter | mark it (a task, an activity, a chapter, a step, a habit's day); on a branch, open it |
+| ⌃P | plan it into Today, linked, as the desk's **p** does |
+| ⌃N | add one where you are: to the page (`- ` for a note), the path, the book, the project… |
+| ⌃E ⌃D | rename, delete (⌃Z brings it back) |
+| ⌃R | continue: fly to the next activity the path is ready for |
+| ⌃T | carry an unfinished task from an earlier page to today |
+| ⌃Z | undo |
+| type | filter the column you're in |
+
+It's the same database, each action one transaction and one undo step, so the desk and the canvas
+can be open side by side: each shows what the other changes.
+
 ## Shelves and focus
 
 Every sidebar (Paths, Library, Habits, Skills, Projects, Ideas) can be narrowed to what
