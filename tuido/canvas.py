@@ -12,16 +12,19 @@ Everything goes through the Store, so each action is one transaction and one und
     ⌃E      rename      ⌃D  delete
     ⌃R      continue: to the next activity a path is ready for
     ⌃T      carry an unfinished task forward to today      ⌃Z  undo
+    ⌃W      when a task's due ('fri', '3 nov', '+3d'): it says so, and calls once it's late
+    ⌃S      a timer on it ('25', '1h30'): it counts down beside it, then calls
 
     tuido --canvas [--db FILE | --demo]
 """
 from datetime import date, timedelta
 import json
+import math
 import os
 import threading
 import time
 
-from . import treecanvas as tc
+from . import notify, treecanvas as tc, when
 from .learning_ui import LEVELS
 
 STATE = {2: ('state_done', '✓', 'x'), 1: ('state_doing', '◐', '~'), 0: ('stub', '○', '.')}
@@ -65,6 +68,9 @@ class Desk(tc.Provider):
         self.store, self.file = store, path
         self.today = date.today
         self.memo = {}          # snapshots, until something changes: a frame asks each node many times
+        self.clock = time.time
+        self.timers = {}        # node id: (when it ends, its name, the threading.Timer that rings it)
+        self.rang = {}          # node id: when its timer ended, until you look at it
         if path and watch:
             threading.Thread(target=self.watch, args=(watch,), daemon=True).start()
 
@@ -324,6 +330,83 @@ class Desk(tc.Provider):
     def mark_before(self, node):
         return True
 
+    # -- time: due days, timers
+    def due(self, node):
+        d = node.data if node.kind == 'task' else None
+        return date.fromisoformat(d['due']) if d and d.get('due') else None
+
+    def late(self, node):
+        """When a task became late (the midnight after its due day), if it's due, unfinished and
+        that's gone; else None."""
+        due = self.due(node)
+        if due is None or due >= self.today() or self.state(node) == 2:
+            return None
+        return time.mktime((due + timedelta(days=1)).timetuple())
+
+    def count(self, node):
+        """A timer counting down ('⏱ 23m'), then when it's due ('due fri', '2 days late')."""
+        parts, role, bold = [], 'stub', False
+        if node.path in self.timers:
+            left = self.timers[node.path][0] - self.clock()
+            parts.append(f'⏱ {max(1, math.ceil(left / 60))}m')
+            role, bold = 'state_doing', True
+        due = self.due(node)
+        if due is not None and self.state(node) != 2:
+            parts.append(when.due_text(due, self.today()))
+            if due < self.today():
+                role, bold = 'git_conflict', True
+            elif due == self.today() and role == 'stub':
+                role, bold = 'state_doing', True
+        return ('  '.join(parts), role, bold) if parts else None
+
+    def beacon(self, node):
+        """A task gone late, from when it did; a project holding one; a timer that's rung, till you
+        look at it."""
+        got = [self.rang.get(node.path), self.late(node)]
+        if node.kind == 'project':
+            today = self.today()
+            got += [time.mktime((date.fromisoformat(r['due']) + timedelta(days=1)).timetuple())
+                    for r in self.store.overdue(node.data['id'], today.isoformat())]
+        got = [t for t in got if t]
+        return max(got) if got else None
+
+    def focus(self, node):
+        if self.rang.pop(node.path, None) is not None:
+            self.status('timer', '', 'gone')
+
+    def next_change(self):
+        """A timer's next minute down, or midnight (what's due today, tomorrow, late, moves)."""
+        now = self.clock()
+        at = [time.mktime((self.today() + timedelta(days=1)).timetuple())]
+        for end, _, _ in self.timers.values():
+            left = end - now
+            at.append(now + (left % 60 or 60) if left > 0 else end)
+        return min(at)
+
+    def start_timer(self, node, minutes):
+        self.stop_timer(node)
+        end = self.clock() + minutes * 60
+        t = threading.Timer(minutes * 60, self.ring, args=(node.path, node.name, end))
+        t.daemon = True
+        self.timers[node.path] = (end, node.name, t)
+        t.start()
+
+    def stop_timer(self, node):
+        got = self.timers.pop(node.path, None)
+        if got:
+            got[2].cancel()
+        return got
+
+    def ring(self, path, name, end):
+        """A timer's time is up (from its thread): told, and its row a beacon till you look."""
+        if self.timers.get(path, (None,))[0] != end:
+            return                  # stopped, or started again since
+        del self.timers[path]
+        self.rang[path] = end
+        notify.notify("Time's up", name.split('\n')[0])
+        self.status('timer', f"time's up: {name.split(chr(10))[0]}", 'note')
+        self.pulse(path)
+
     def colour(self, node):
         """Finished green, under way amber (the theme's), notes quiet."""
         if node.kind == 'info':
@@ -430,6 +513,10 @@ class Desk(tc.Provider):
             out += [('\x05', 'rename', '⌃E rename'), ('\x04', 'delete', '⌃D delete')]
         if k in ('path', 'activity'):
             out.append(('\x12', 'continue', '⌃R continue'))
+        if k == 'task':
+            out.append(('\x17', 'due', '⌃W due…'))
+        if k in ('task', 'activity', 'habit', 'bullet', 'chapter'):
+            out.append(('\x13', 'timer', '⌃S stop timer' if node.path in self.timers else '⌃S timer'))
         if k == 'bullet' and not node.data['done'] and not node.data['note'] and not node.data['migrated'] \
                 and node.data['day'] != self.today().isoformat():
             out.append(('\x14', 'today', '⌃T to today'))
@@ -455,6 +542,33 @@ class Desk(tc.Provider):
             whatever happens: anything else would close the canvas."""
             return lambda text: attempt(lambda: make(text.strip()), done) if text.strip() else None
 
+        if name == 'due':
+            def due(text):
+                if not text.strip() or text.strip().lower() in ('none', 'no', '-'):
+                    return attempt(lambda: s.set_due(d['id'], None), 'not due any more')
+                got = when.day(text, self.today())
+                if got is None:
+                    canvas.status('act', f'when is that? say {when.SAYS}', 'failed')
+                    return None
+                return attempt(lambda: s.set_due(d['id'], got.isoformat()), when.due_text(got, self.today()))
+            now = self.due(node)
+            canvas.ask(f'due ({when.SAYS}; nothing: not due)', due, text=f'{now.day} {now:%b}' if now else '')
+            return None
+        if name == 'timer':
+            if self.stop_timer(node):
+                canvas.status('act', 'timer stopped', 'note')
+                return None
+
+            def start(text):
+                got = when.minutes(text) if text.strip() else 25
+                if got is None:
+                    canvas.status('act', "how long? say 25, 45m or 1h30", 'failed')
+                    return None
+                self.start_timer(node, got)
+                canvas.status('act', f'timer: {got} min', 'ok')
+                return None
+            canvas.ask('timer, minutes (25)', start)
+            return None
         if name == 'undo':
             if s.undo():
                 self.invalidate()

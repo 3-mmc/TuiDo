@@ -100,6 +100,8 @@ you move onto it. Pinned focus and the chosen shelf narrow it as they do the des
 | ⌃E ⌃D | rename, delete (⌃Z brings it back) |
 | ⌃R | continue: fly to the next activity the path is ready for |
 | ⌃T | carry an unfinished task from an earlier page to today |
+| ⌃W | when a task's due (`fri`, `tomorrow`, `3 nov`, `+3d`, `next week`; nothing, not due): it says so beside it, and once it's late it's a beacon (white on red, blinking at first), its project too |
+| ⌃S | a timer on it (`25`, `45m`, `1h30`; 25 if you just press Enter): it counts down beside it, then a notification and a beacon until you look; ⌃S again stops it |
 | ⌃Z | undo |
 | type | filter the column you're in |
 

@@ -37,6 +37,8 @@ class ProjectStore:
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN shelf_id INTEGER REFERENCES shelves(id) ON DELETE SET NULL")
         if "project_task_id" not in {r["name"] for r in self.db.execute("PRAGMA table_info(bullets)")}:
             self.db.execute("ALTER TABLE bullets ADD COLUMN project_task_id INTEGER REFERENCES project_tasks(id) ON DELETE SET NULL")
+        if "due" not in {r["name"] for r in self.db.execute("PRAGMA table_info(project_tasks)")}:
+            self.db.execute("ALTER TABLE project_tasks ADD COLUMN due TEXT")     # the day it's due, or NULL
         self.db.commit()
 
     # View settings apply to every sidebar. They are not undo steps, and undo
@@ -116,6 +118,16 @@ class ProjectStore:
     def validate_repeat(every_days):
         if every_days is not None and (not isinstance(every_days, int) or every_days < 1):
             raise ValueError("Repeat interval must be a whole number of days.")
+
+    def set_due(self, task_id, day=None):
+        """When a task is due (an ISO day), or not at all (None). One undo step."""
+        with self.change():
+            self.db.execute("UPDATE project_tasks SET due=? WHERE id=?", (day, task_id))
+
+    def overdue(self, project_id, today):
+        """The project's unfinished tasks due before `today` (ISO), as rows."""
+        return self.rows("SELECT * FROM project_tasks WHERE project_id=? AND due IS NOT NULL AND due < ? "
+                         "AND status != 2 AND every_days IS NULL", (project_id, today))
 
     def add_task(self, project_id, title, parent_id=None, notes="", every_days=None):
         self.validate_repeat(every_days)

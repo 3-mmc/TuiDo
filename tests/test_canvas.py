@@ -245,3 +245,72 @@ def test_alt_arrows_nest_lift_and_move_a_step_and_you_go_with_it(desk):
     assert c.statuses["act"][:2] == ("it is at the top already", "note")
     press(c, "\x1a", "\x1a", "\x1a")                             # and undo, a step at a time
     assert desk.rows("SELECT parent_id FROM project_tasks WHERE id=?", (draft["id"],))[0]["parent_id"] is None
+
+
+def test_w_says_when_a_task_is_due_and_it_calls_once_its_late(desk):
+    c = canvas(desk)
+    p = c.source
+    p.today = lambda: date(2026, 10, 30)                          # a Friday
+    thesis = find(c, "Projects", "Thesis chapter 2")
+    step = next(k for k in thesis.load() if k.kind == "task" and not k.is_dir and p.state(k) != 2)
+    assert c.go([thesis.parent.path, thesis.path, step.path])
+    press(c, "\x17", *"mon", "\r")                                # ⌃W: due Monday
+    screen(c)
+    step = c.focus
+    assert step.data["due"] == "2026-11-02"
+    assert p.count(step) == ("due Mon", "stub", False)
+    assert p.beacon(step) is None and p.beacon(thesis) is None
+    p.today = lambda: date(2026, 11, 4)                           # two days on: late, calling
+    p.invalidate()
+    screen(c)
+    assert p.count(c.focus) == ("2 days late", "git_conflict", True)
+    late_since = time.mktime(date(2026, 11, 3).timetuple())
+    assert p.beacon(c.focus) == late_since
+    assert p.beacon(c.focus.parent) == late_since                 # its project too
+    press(c, "\x17", "\r")                                        # said again as it was: still late, not next year's
+    screen(c)
+    assert c.focus.data["due"] == "2026-11-02"
+    press(c, "\x17", *["\x7f"] * 8, "\r")                         # nothing: not due any more
+    screen(c)
+    assert c.focus.data["due"] is None and p.beacon(c.focus) is None
+    press(c, "\x1a")                                              # one undo step: due again
+    screen(c)
+    assert c.focus.data["due"] == "2026-11-02"
+
+
+def test_s_starts_a_timer_that_counts_down_then_rings_until_seen(desk, monkeypatch):
+    from tuido import notify
+    told = []
+    monkeypatch.setattr(notify, "notify", lambda title, body: told.append((title, body)))
+    c = canvas(desk)
+    p = c.source
+    now = [1_000_000.0]
+    p.clock = lambda: now[0]
+    thesis = find(c, "Projects", "Thesis chapter 2")
+    step = next(k for k in thesis.load() if k.kind == "task")
+    assert c.go([thesis.parent.path, thesis.path, step.path])
+    press(c, "\x13", *"1h30", "\r")
+    assert p.count(c.focus)[:2] == ("⏱ 90m", "state_doing")
+    now[0] += 60 * 30 + 10
+    assert p.count(c.focus)[0] == "⏱ 60m"
+    assert p.next_change() == now[0] + 50                          # the next minute down
+    end = p.timers[c.focus.path][0]
+    p.ring(c.focus.path, c.focus.name, end)                         # its time comes
+    assert told == [("Time's up", step.name)]
+    assert p.beacon(c.focus) == end and c.focus.path not in p.timers
+    p.focus(c.focus)                                               # looked at: it stops
+    assert p.beacon(c.focus) is None
+    press(c, "\x13", "\r")                                         # 25 by default; ⌃S again stops it
+    assert p.count(c.focus)[0] == "⏱ 25m"
+    press(c, "\x13")
+    assert c.focus.path not in p.timers
+
+
+def test_when_reads_days_and_lengths():
+    from tuido import when
+    fri = date(2026, 10, 30)
+    assert [when.day(t, fri) for t in ("fri", "tomorrow", "mon", "3 nov", "nov 3", "+3d", "2w", "next week")] == \
+        [fri, date(2026, 10, 31), date(2026, 11, 2), date(2026, 11, 3), date(2026, 11, 3), date(2026, 11, 2),
+         date(2026, 11, 13), date(2026, 11, 2)]
+    assert when.day("1 jan", fri) == date(2027, 1, 1) and when.day("soon", fri) is None and when.day("31 feb", fri) is None
+    assert [when.minutes(t) for t in ("25", "25m", "1h", "1h30", "90 min", "", "x")] == [25, 25, 60, 90, 90, None, None]
