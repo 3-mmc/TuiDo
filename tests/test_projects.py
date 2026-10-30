@@ -309,3 +309,22 @@ async def test_previews_toggle_per_list_and_persist(tmp_path):
     store = Store(path)
     assert not store.previews("projects") and not store.previews("ideas")
     store.close()
+
+
+def test_a_task_can_be_due_and_late_ones_are_found(tmp_path):
+    from tuido.store import Store
+    store = Store(tmp_path / "due.sqlite3")
+    project = store.add_project("Kiln")
+    task = store.add_task(project, "Order clay")
+    done = store.add_task(project, "Sweep")
+    store.set_due(task, "2026-11-02")
+    store.set_due(done, "2026-11-01")
+    store.cycle_task(done)
+    store.cycle_task(done)                                    # finished: never late
+    assert [r["title"] for r in store.overdue(project, "2026-11-04")] == ["Order clay"]
+    assert store.overdue(project, "2026-11-02") == []          # due today isn't late yet
+    store.set_due(task, None)
+    assert store.overdue(project, "2026-11-04") == []
+    store.undo()                                              # one undo step: due again
+    assert [r["title"] for r in store.overdue(project, "2026-11-04")] == ["Order clay"]
+    store.close()

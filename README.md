@@ -75,11 +75,12 @@ Use a terminal at least 60 columns wide and 24 rows high. No special font is nee
 ## On a canvas
 
 ```sh
-uv run tuido --canvas            # or --canvas --demo
+uv run tuido --canvas            # or --canvas --demo; or `twigs tasks`
 ```
 
-The same desk, drawn as one tree you move across with
-[treecanvas](https://github.com/3-mmc/treecanvas): Today and its earlier pages, Paths, Library,
+The canvas is a twig: it comes with [twigs](https://github.com/3-mmc/twigs) (`twigs install
+tasks`), which `--canvas` finds by its `twigs` command. The same desk, drawn as one tree you move
+across: Today and its earlier pages, Paths, Library,
 Habits, Skills, Projects and Ideas branch from the root, each as deep as it goes. Every folder you
 open keeps its place; the camera follows you. Each item's state comes before its title (○ not
 started, ◐ under way, ✓ done, › carried forward), and finished work turns green, work under way

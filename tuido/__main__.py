@@ -8,6 +8,26 @@ from .store import Store
 from .syllabus import SyllabusError, load_syllabus
 
 
+def twigs_canvas():
+    """twigs' tasks canvas (github.com/3-mmc/twigs), where twigs is: importable here, or found by
+    its `twigs` command; None if it's nowhere."""
+    import shutil, sys
+    try:
+        from twigs.apps.tasks.canvas import run
+        return run
+    except ImportError:
+        pass
+    found = shutil.which("twigs")
+    if not found:
+        return None
+    sys.path.insert(0, os.path.dirname(os.path.realpath(found)))
+    try:
+        from twigs.apps.tasks.canvas import run
+        return run
+    except ImportError:
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="TuiDo — learning paths, habits, and a fresh page each day")
     database = parser.add_mutually_exclusive_group()
@@ -74,8 +94,11 @@ def main():
                         from .visuals import render_path_html
                         write(args.output, render_path_html(store, paths[0]["id"]))
                 elif args.canvas:
-                    from .canvas import run
-                    run(store, None if args.demo else db_path)    # watched for changes made beside it
+                    canvas = twigs_canvas()
+                    if canvas is None:
+                        parser.exit(2, "tuido: the canvas is a twig now: install twigs (github.com/3-mmc/twigs), "
+                                       "then `twigs install tasks`\n")
+                    canvas(store, None if args.demo else db_path)    # watched for changes made beside it
                 else:
                     from .app import Tuido
                     Tuido(store, demo=args.demo).run()
