@@ -7,7 +7,9 @@ steps and subtasks. Pinned focus and the chosen shelf narrow it as they do the d
 Everything goes through the Store, so each action is one transaction and one undo step:
 
     Enter   mark it (a task, activity, chapter, step or habit's day), or open it
-    ⌃P      plan it into Today      ⌃N  add one here      ⌃E  rename      ⌃D  delete
+    ⌃P      plan it into Today      ⌃N  add one beside it    ⌃A  add one inside it (a subtask)
+    ⌥→ ⌥←   nest a step under the one above, or lift it out      ⌥↑ ⌥↓  move it
+    ⌃E      rename      ⌃D  delete
     ⌃R      continue: to the next activity a path is ready for
     ⌃T      carry an unfinished task forward to today      ⌃Z  undo
 
@@ -416,9 +418,14 @@ class Desk(tc.Provider):
         out = []
         if (k in ('activity', 'task') and not self.holds(node)) or k in ('chapter', 'habit'):
             out.append(('\x10', 'plan', '⌃P plan'))
-        if k in ('today', 'page', 'paths', 'path', 'activity', 'library', 'book', 'habits', 'projects', 'project',
-                 'task', 'ideas', 'bullet'):
+        if k in ('today', 'page', 'paths', 'path', 'activity', 'library', 'book', 'habits', 'habit', 'projects',
+                 'project', 'task', 'ideas', 'bullet'):
             out.append(('\x0e', 'new', '⌃N add'))
+        if k in ('task', 'activity', 'habit'):
+            out.append(('\x01', 'inside', '⌃A add inside'))
+        if k == 'task':
+            out += [('alt-right', 'nest', '⌥→ nest'), ('alt-left', 'lift', '⌥← lift'),
+                    ('alt-up', 'up', '⌥↑↓ move'), ('alt-down', 'down', '')]
         if k in TABLE:
             out += [('\x05', 'rename', '⌃E rename'), ('\x04', 'delete', '⌃D delete')]
         if k in ('path', 'activity'):
@@ -480,6 +487,19 @@ class Desk(tc.Provider):
             canvas.ask(f'delete {tc.clip(what, 40)}?  y yes  n no  (⌃Z brings it back)', gone, choices='yn')
         elif name == 'new':
             self.new(node, canvas, typed)
+        elif name == 'inside':
+            self.inside(node, canvas, typed)
+        elif name in ('nest', 'lift', 'up', 'down'):
+            moved = {'nest': lambda: s.indent_task(d['id']), 'lift': lambda: s.outdent_task(d['id']),
+                     'up': lambda: s.move_task(d['id'], -1), 'down': lambda: s.move_task(d['id'], 1)}[name]()
+            if not moved:
+                canvas.status('act', {'nest': 'nothing above it to go under', 'lift': 'it is at the top already',
+                                      'up': 'first already', 'down': 'last already'}[name], 'note')
+                return None
+            self.invalidate()
+            canvas.refresh()                    # the tree as it is now, then back onto the step where it went
+            if canvas.go(self.task_ids(d['project_id'], d['id'])):
+                self.pulse(canvas.focus.path)
         elif name == 'continue':
             path_id = d['path_id'] if k == 'activity' else d['id']
             nxt = s.next_activity(path_id)
@@ -498,6 +518,30 @@ class Desk(tc.Provider):
             if canvas.go(ids):                  # the camera flies there
                 self.pulse(ids[-1])
         return None
+
+    def task_ids(self, project_id, task_id):
+        """The ids down to a step: /projects, /projects/j…, then each step it's in."""
+        tasks, _, _ = self.project(project_id)
+        chain, at = [], task_id
+        while at:
+            chain.append(f't{at}')
+            at = tasks[at]['parent_id']
+        ids, way = ['/projects', f'/projects/j{project_id}'], f'/projects/j{project_id}'
+        for key in reversed(chain):
+            way += '/' + key
+            ids.append(way)
+        return ids
+
+    def inside(self, node, canvas, typed):
+        """⌃A: one inside it: a subtask under a step, an activity under one, a habit under a habit."""
+        s, k, d = self.store, node.kind, node.data
+        if k == 'task':
+            canvas.ask(f'a subtask of {tc.clip(node.name, 30)}', typed(lambda t: s.add_task(d['project_id'], t, d['id'])))
+        elif k == 'activity':
+            canvas.ask(f'inside {tc.clip(node.name, 30)}', typed(lambda t: s.add_activity(d['path_id'], t, parent_id=d['id'])))
+        elif k == 'habit':                      # a child counts towards its parent: the same unit
+            canvas.ask(f'a habit within {tc.clip(node.name, 30)}', typed(
+                lambda t: s.add_habit(t, d['unit'], d['daily_goal'], d['weekly_goal'], d['goal_period'], d['id'])))
 
     def new(self, node, canvas, typed):
         """⌃N: add one where you are: to the page, the path, the book, the project…"""
@@ -518,6 +562,10 @@ class Desk(tc.Provider):
             canvas.ask('a new chapter', typed(lambda t: s.add_chapter(d['id'], t.strip())))
         elif k == 'habits':
             canvas.ask('a new habit', typed(lambda t: s.add_habit(t.strip())))
+        elif k == 'habit':                      # beside it: under the same parent, in its unit if it has one
+            parent = d.get('parent_id')
+            canvas.ask('a new habit', typed(lambda t: s.add_habit(t.strip(), d['unit'], parent_id=parent) if parent
+                                                else s.add_habit(t.strip())))
         elif k == 'projects':
             canvas.ask('a new project', typed(lambda t: s.add_project(t.strip())))
         elif k in ('project', 'task'):

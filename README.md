@@ -93,7 +93,10 @@ you move onto it. Pinned focus and the chosen shelf narrow it as they do the des
 | ↑ ↓ → ← | move; → opens |
 | Enter | mark it (a task, an activity, a chapter, a step, a habit's day); on a branch, open it |
 | ⌃P | plan it into Today, linked, as the desk's **p** does |
-| ⌃N | add one where you are: to the page (`- ` for a note), the path, the book, the project… |
+| ⌃N | add one where you are: to the page (`- ` for a note), the path, the book, the project, or beside the step, activity or habit you're on |
+| ⌃A | add one inside: a subtask under a step, an activity under an activity, a habit within a habit (in its unit) |
+| ⌥→ ⌥← | nest a step under the one above it; lift it back out |
+| ⌥↑ ⌥↓ | move a step up or down |
 | ⌃E ⌃D | rename, delete (⌃Z brings it back) |
 | ⌃R | continue: fly to the next activity the path is ready for |
 | ⌃T | carry an unfinished task from an earlier page to today |

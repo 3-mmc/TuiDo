@@ -198,3 +198,50 @@ def test_notes_sit_on_the_canvas_before_the_parts_and_enter_still_marks(desk):
     assert c.focus is leaf                                       # marked, not opened
     assert desk.rows("SELECT status FROM activities WHERE id=?", (leaf.data["id"],))[0]["status"] == 1
     assert not c.source.pane                                     # no pane: it's all on the canvas
+
+
+def keys(c, data):
+    """Keys as a terminal sends them (Alt+arrows too), through the canvas's own reading of them."""
+    for k in tc.keys(data):
+        tc.apply(c, k, c.opts)
+
+
+def test_add_inside_a_step_an_activity_and_a_habit(desk):
+    c = canvas(desk)
+    find(c, "Projects", "Thesis chapter 2", "Send to supervisor")
+    press(c, "\x01", *"Attach the outline", "\r")
+    send = desk.rows("SELECT id FROM project_tasks WHERE title='Send to supervisor'")[0]["id"]
+    assert desk.rows("SELECT parent_id FROM project_tasks WHERE title='Attach the outline'")[0]["parent_id"] == send
+    find(c, "Paths", "Learning to learn", "Find your question", "Read: asking useful questions")
+    press(c, "\x01", *"Underline three questions", "\r")
+    reading = desk.rows("SELECT id FROM activities WHERE title='Read: asking useful questions'")[0]["id"]
+    assert desk.rows("SELECT parent_id FROM activities WHERE title='Underline three questions'")[0]["parent_id"] == reading
+    find(c, "Habits", "Exercise")
+    press(c, "\x01", *"Swimming", "\r")
+    swim = desk.rows("SELECT * FROM habits WHERE title='Swimming'")[0]
+    exercise = desk.rows("SELECT * FROM habits WHERE title='Exercise'")[0]
+    assert swim["parent_id"] == exercise["id"] and swim["unit"] == exercise["unit"] == "minutes"
+    screen(c)
+    assert any(k.name == "Swimming" for k in find(c, "Habits", "Exercise").load())     # a sub-habit, under it
+    press(c, "\x0e", *"Cycling", "\r")
+    assert desk.rows("SELECT parent_id FROM habits WHERE title='Cycling'")[0]["parent_id"] is None   # beside it
+
+
+def test_alt_arrows_nest_lift_and_move_a_step_and_you_go_with_it(desk):
+    c = canvas(desk)
+    find(c, "Projects", "Thesis chapter 2", "Write the messy first draft")
+    keys(c, "\x1b[1;3C")                                         # ⌥→: under the step above (Outline)
+    outline = desk.rows("SELECT id FROM project_tasks WHERE title='Outline'")[0]["id"]
+    draft = desk.rows("SELECT * FROM project_tasks WHERE title='Write the messy first draft'")[0]
+    assert draft["parent_id"] == outline
+    assert c.focus.name == "Write the messy first draft" and c.focus.parent.name == "Outline"
+    keys(c, "\x1b[1;3A")                                         # ⌥↑: before the step above it
+    order = [r["title"] for r in desk.rows("SELECT title FROM project_tasks WHERE parent_id=? ORDER BY position", (outline,))]
+    assert order.index("Write the messy first draft") == len(order) - 2
+    keys(c, "\x1b[1;3D")                                         # ⌥←: back out, just below Outline
+    assert desk.rows("SELECT parent_id FROM project_tasks WHERE id=?", (draft["id"],))[0]["parent_id"] is None
+    assert c.focus.name == "Write the messy first draft" and c.focus.parent.name == "Thesis chapter 2"
+    keys(c, "\x1b[1;3D")
+    assert c.statuses["act"][:2] == ("it is at the top already", "note")
+    press(c, "\x1a", "\x1a", "\x1a")                             # and undo, a step at a time
+    assert desk.rows("SELECT parent_id FROM project_tasks WHERE id=?", (draft["id"],))[0]["parent_id"] is None

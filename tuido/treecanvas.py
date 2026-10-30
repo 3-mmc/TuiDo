@@ -1,4 +1,4 @@
-# Vendored from treecanvas (github.com/3-mmc/treecanvas) at 31f24f9: do not edit here.
+# Vendored from treecanvas (github.com/3-mmc/treecanvas) at 389c593: do not edit here.
 # Change it there and run tools/vendor-treecanvas.py; tuido's own choices are in tuido/canvas.py.
 """treecanvas: a tree as one canvas you move across; the file system, unless you give it another.
 (It was filecanvas: the file system is still what it shows by default.)
@@ -597,8 +597,9 @@ class Provider:
 
     def actions(self, node):
         """Keys handled on `node`: [(key, name, hint)]. A key is a control character the canvas
-        and the usual terminals leave free (⌃A ⌃D ⌃E ⌃F ⌃K ⌃L ⌃N ⌃O ⌃P ⌃R ⌃S ⌃T ⌃W ⌃Y: not ⌃B,
-        tmux's, nor ⌃V, Windows Terminal's paste); the hint ('⌃R reply') is shown along the bottom."""
+        and the usual terminals leave free (⌃A ⌃D ⌃E ⌃F ⌃K ⌃L ⌃N ⌃O ⌃P ⌃R ⌃S ⌃T ⌃W ⌃Y ⌃Z: not ⌃B,
+        tmux's, nor ⌃V, Windows Terminal's paste), or 'alt-up' … 'alt-left' for Alt with an arrow;
+        the hint ('⌃R reply') is shown along the bottom."""
         return []
 
     def act(self, node, name, canvas):
@@ -1349,7 +1350,7 @@ class Canvas:
             hint = 'esc cancel' if self.asking[3] is not None else '⏎ done  esc cancel  ⌃U clear  ⌃W word'
             lines.append(P.fg('hint') + hint[:full - 1] + '\033[0m')
         else:
-            acts = [h for _, _, h in self.source.actions(self.focus)] if not isinstance(self.focus, Stub) else []
+            acts = [h for _, _, h in self.source.actions(self.focus) if h] if not isinstance(self.focus, Stub) else []
             hint = '  '.join(acts + ['↑↓ move  →/tab open  ← parent  type filter  ⌃X fold  ' +
                                      ('pgup/pgdn scroll  ' if pane_w else '') + '⏎ choose  esc cancel'])
             lines.append(P.fg('hint') + clip(hint, full - 1) + '\033[0m')
@@ -1603,7 +1604,9 @@ def init(shell, cmd='cdi', key='ctrl-t', run=None):
 def keys(data):
     seq = {'\x1b[A': 'up', '\x1b[B': 'down', '\x1b[C': 'right', '\x1b[D': 'left',
            '\x1bOA': 'up', '\x1bOB': 'down', '\x1bOC': 'right', '\x1bOD': 'left', '\x1b[Z': 'backtab',
-           '\x1b[5~': 'pgup', '\x1b[6~': 'pgdn'}
+           '\x1b[5~': 'pgup', '\x1b[6~': 'pgdn',
+           # Alt with an arrow: the canvas leaves them to providers' actions (moving things, say)
+           '\x1b[1;3A': 'alt-up', '\x1b[1;3B': 'alt-down', '\x1b[1;3C': 'alt-right', '\x1b[1;3D': 'alt-left'}
     i = 0
     while i < len(data):
         for s, name in seq.items():
