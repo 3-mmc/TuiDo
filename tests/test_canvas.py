@@ -24,7 +24,7 @@ def desk(tmp_path):
 
 def canvas(store, path=None, watch=0):
     return tc.Canvas("", tc.options(provider=Desk(store, path, watch), backdrop="off", ease=1, glyphs="plain",
-                                    colmax=40))
+                                    colmax=40, peek=True))
 
 
 def press(c, *keys):
@@ -54,18 +54,23 @@ def test_the_desk_branches_into_its_sections_and_down(desk):
     assert [k.name for k in c.root.load()] == ["Today", "Earlier pages", "Paths", "Library", "Habits", "Skills",
                                               "Projects", "Ideas"]
     book = find(c, "Library", "Linear Algebra")
-    assert book.label() == "Linear Algebra  ▰▰▰◧▱▱▱▱"          # three read, one under way
-    assert [k.name for k in book.load()][:2] == ["Systems of equations", "Row reduction"]
-    assert book.source.mark(book.load()[0])[1] == "✓"
+    assert book.label() == "Linear Algebra\n██ ██ ██ ▓▓ ░░ ░░ ░░ ░░  3/8"     # under it: three read, one under way
+    chapters = [k for k in book.load() if k.kind == "chapter"]
+    assert [k.name for k in chapters][:2] == ["Systems of equations", "Row reduction"]
+    assert book.source.mark(chapters[0])[2] == "x" and book.source.mark_before(chapters[0])
+    assert book.source.colour(chapters[0]) == ("state_done", False)
+    assert book.source.line(chapters[0]) == "state_done"
+    assert book.source.mark(chapters[3])[2] == "~" and book.source.colour(chapters[3])[0] == "state_doing"
     thesis = find(c, "Projects", "Thesis chapter 2")
     assert thesis.source.mark(thesis)[1] == "★"                 # pinned
     outline = next(k for k in thesis.load() if k.name == "Outline")
-    assert outline.is_dir and [k.name for k in outline.load()][0] == "List the three main arguments"
+    assert outline.is_dir and [k.name for k in outline.load() if k.kind == "task"][0] == "List the three main arguments"
     laundry = next(k for k in find(c, "Projects", "Home").load() if k.name == "Laundry")
     assert laundry.label() == "Laundry · every 7 days · 9 days ago"
     habit = find(c, "Habits", "Read")
-    assert re.fullmatch(r"Read  [■□· ]{7}", habit.label())
-    assert "M " in habit.source.preview(habit)                   # the heatmap, a row a weekday
+    assert re.fullmatch(r"Read\n[■□·]( [■□·])*", habit.label())                # this week, under it
+    notes = [k for k in habit.load() if k.kind == "info"]
+    assert notes and "M " in notes[0].label()                    # on the canvas: the heatmap, a row a weekday
     assert "Earlier pages" in "".join(screen(c))
 
 
@@ -170,7 +175,26 @@ def test_changes_made_beside_it_show(tmp_path):
     store.close()
 
 
-def test_boxes_squeeze_and_show_progress():
-    assert boxes([2, 1, 0]) == "▰◧▱"
-    assert len(boxes([0] * 30)) == 8
+def test_bars_are_blocks_a_part_or_one_bar_in_proportion():
+    assert boxes([2, 1, 0]) == "████ ▓▓▓▓ ░░░░  1/3"           # a block a part, room for four each
+    assert boxes([2] * 6 + [0] * 6) == "█ █ █ █ █ █ ░ ░ ░ ░ ░ ░  6/12"
+    long = boxes([2] * 10 + [1] * 5 + [0] * 25)                  # too many for blocks: one bar
+    assert long == "██████" + "▓▓▓" + "░" * 15 + "  10/40"
     assert boxes([]) == ""
+
+
+def test_notes_sit_on_the_canvas_before_the_parts_and_enter_still_marks(desk):
+    c = canvas(desk)
+    path = find(c, "Paths", "Learning to learn")
+    kids = path.load()
+    notes = [k.label() for k in kids if k.kind == "info"]
+    assert kids[0].kind == "info" and notes[0].startswith("Build a sustainable")  # what it's for, first
+    assert notes[-1].startswith("next: ")                        # then what's next
+    press(c, "right")
+    assert c.focus.kind == "activity"                            # going in lands past the notes
+    leaf = find(c, "Paths", "Learning to learn", "Find your question", "Read: asking useful questions")
+    assert leaf.is_dir and leaf.load()[0].label().startswith("source: ")         # its source, beside it
+    press(c, "\r")
+    assert c.focus is leaf                                       # marked, not opened
+    assert desk.rows("SELECT status FROM activities WHERE id=?", (leaf.data["id"],))[0]["status"] == 1
+    assert not c.source.pane                                     # no pane: it's all on the canvas

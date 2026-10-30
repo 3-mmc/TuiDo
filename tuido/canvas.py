@@ -22,7 +22,9 @@ import time
 from . import treecanvas as tc
 from .learning_ui import LEVELS
 
-STATE = {2: ('git_staged', '✓', 'x'), 1: ('git_dirty', '◐', '~')}
+STATE = {2: ('state_done', '✓', 'x'), 1: ('state_doing', '◐', '~'), 0: ('stub', '○', '.')}
+COLOUR = {2: 'state_done', 1: 'state_doing'}
+INFO_WIDTH = 44     # columns a note wraps to on the canvas
 SECTIONS = (('today', 'Today'), ('pages', 'Earlier pages'), ('paths', 'Paths'), ('library', 'Library'),
             ('habits', 'Habits'), ('skills', 'Skills'), ('projects', 'Projects'), ('ideas', 'Ideas'))
 TABLE = {'path': 'paths', 'activity': 'activities', 'book': 'books', 'chapter': 'chapters', 'habit': 'habits',
@@ -30,14 +32,21 @@ TABLE = {'path': 'paths', 'activity': 'activities', 'book': 'books', 'chapter': 
 WEEK = 'MTWTFSS'
 
 
-def boxes(states, width=8):
-    """Progress as boxes, one per part (squeezed to `width`): done ▰, under way ◧, not yet ▱."""
+def boxes(states, width=24):
+    """Progress as a bar under a title: a block per part (done █, under way ▓, not yet ░) with
+    gaps between, or, with too many parts for that, one bar in proportion; then how many are done."""
     if not states:
         return ''
-    if len(states) > width:
-        step = len(states) / width
-        states = [states[int(i * step)] for i in range(width)]
-    return ''.join('▰' if s == 2 else '◧' if s == 1 else '▱' for s in states)
+    n = len(states)
+    per = min(4, (width + 1) // n - 1)
+    glyph = {2: '█', 1: '▓'}
+    if per >= 1:                                # a block a part, as long as each gets one
+        bar = ' '.join(glyph.get(s, '░') * per for s in states)
+    else:
+        done, doing = sum(s == 2 for s in states), sum(s == 1 for s in states)
+        a, b = round(width * done / n), round(width * doing / n)
+        bar = '█' * a + '▓' * b + '░' * (width - a - b)
+    return f'{bar}  {sum(s == 2 for s in states)}/{n}'
 
 
 def ago(day, today):
@@ -46,8 +55,9 @@ def ago(day, today):
 
 
 class Desk(tc.Provider):
-    """The provider: nodes carry (kind, row) in data; ids are the way down, /paths/3/a12/a15."""
-    pane = True
+    """The provider: nodes carry (kind, row) in data; ids are the way down, /paths/3/a12/a15.
+    No reading pane: what there is to say about something is on the canvas beside it."""
+    pane = False
 
     def __init__(self, store, path=None, watch=2.0):
         self.store, self.file = store, path
@@ -95,6 +105,10 @@ class Desk(tc.Provider):
         return tc.Node('', 'tuido', True, source=self, kind='root')
 
     def children(self, node):
+        kids = self.parts(node)
+        return kids if node.kind in ('root', 'info') else self.with_info(node, kids)
+
+    def parts(self, node):
         s, k = self.store, node.kind
         if k == 'root':
             return [tc.Node('/' + key, name, True, node, key) for key, name in SECTIONS]
@@ -138,7 +152,84 @@ class Desk(tc.Provider):
         return []
 
     def make(self, parent, kind, row, key, branch):
-        return tc.Node(f'{parent.path}/{key}', row.get('title') or '(untitled)', branch, parent, kind, data=row)
+        node = tc.Node(f'{parent.path}/{key}', row.get('title') or '(untitled)', branch, parent, kind, data=row)
+        if not branch and self.info(node):          # something to say about it: it opens onto that
+            node.is_dir = True
+        return node
+
+    def info(self, node):
+        """What there is to say about a node, as lines of notes for the canvas beside it."""
+        return self.remember(('info', node.path), lambda: self.about(node))
+
+    def about(self, node):
+        k, d, s = node.kind, node.data, self.store
+        out = []
+        if k in ('today', 'page'):
+            day = self.today().isoformat() if k == 'today' else d
+            rows = s.rows("SELECT * FROM bullets WHERE day=?", (day,))
+            tasks = [b for b in rows if not b['note']]
+            if rows:
+                out.append(f'{sum(b["done"] for b in tasks)} of {len(tasks)} done'
+                           + (f', {len(rows) - len(tasks)} notes' if len(rows) > len(tasks) else ''))
+        elif k == 'bullet':
+            linked = self.linked(d)
+            if linked:
+                out.append(linked)
+            if d['migrated']:
+                out.append('carried forward')
+        elif k == 'path':
+            if d.get('description'):
+                out.append(d['description'])
+            nxt = s.next_activity(d['id'])
+            if nxt:
+                out.append('next: ' + s.rows("SELECT title FROM activities WHERE id=?", (nxt,))[0]['title'] + '  (⌃R)')
+        elif k == 'activity':
+            if d['optional']:
+                out.append('optional')
+            if d['resource_uid']:
+                res = s.rows("SELECT title, url FROM resources WHERE uid=?", (d['resource_uid'],))
+                if res:
+                    out.append('source: ' + res[0]['title'] + (f'  {res[0]["url"]}' if res[0]['url'] else ''))
+            missing = self.unmet(d['path_id'], d['id'])
+            if missing:
+                out.append('suggested first: ' + ', '.join(missing))
+            if d['notes']:
+                out.append(d['notes'])
+        elif k == 'chapter' and s.rows("SELECT textbook FROM books WHERE id=?", (d['book_id'],))[0]['textbook']:
+            out.append('exercises: ' + ('done' if d['exercises'] else 'not yet'))
+        elif k == 'habit':
+            out.append(self.heatmap(d))
+        elif k == 'skill' and d['evidence']:
+            out.append('evidence: ' + d['evidence'])
+        elif k == 'project':
+            if d['notes']:
+                out.append(d['notes'])
+            nxt = s.next_task(d['id'])
+            if nxt:
+                out.append('next: ' + s.rows("SELECT title FROM project_tasks WHERE id=?", (nxt,))[0]['title'])
+        elif k in ('task', 'idea'):
+            if d.get('notes'):
+                out.append(d['notes'])
+            if k == 'idea' and d.get('project_id'):
+                taken = s.rows("SELECT title FROM projects WHERE id=?", (d['project_id'],))
+                if taken:
+                    out.append(f'taken up in {taken[0]["title"]}')
+        return out
+
+    def holds(self, node):
+        """Whether it has parts of its own (a module's activities, a step's subtasks), not just notes."""
+        if node.kind == 'activity':
+            return bool(self.learning(node.data['path_id'])[1].get(node.data['id']))
+        if node.kind == 'task':
+            return bool(self.project(node.data['project_id'])[1].get(node.data['id']))
+        return node.kind not in ('chapter', 'bullet', 'skill', 'idea', 'habit') or \
+            (node.kind == 'habit' and any(h['sidebar_parent'] == node.data['id'] for h in self.store.sidebar_items('habits')))
+
+    def with_info(self, node, kids):
+        """A node's notes first, quiet, then its children."""
+        notes = [tc.Node(f'{node.path}/info{n}', text, False, node, 'info', data=text)
+                 for n, text in enumerate(self.info(node))]
+        return notes + kids
 
     def bullet(self, b, parent):
         text = ('— ' if b['note'] else '') + b['text']
@@ -149,9 +240,26 @@ class Desk(tc.Provider):
         return ('yesterday · ' if d == self.today() - timedelta(days=1) else '') + d.strftime('%a %-d %b %Y')
 
     # -- how it looks
+    def parts_states(self, node):
+        """The states of a path's modules, a book's chapters, a project's steps."""
+        k, d = node.kind, node.data
+        if k == 'path':
+            _, children, states = self.learning(d['id'])
+            return [states[i] for i in children.get(None, [])]
+        if k == 'book':
+            return [c['reading'] for c in self.remember(('chapters', d['id']), lambda: self.store.rows(
+                "SELECT reading FROM chapters WHERE book_id=? ORDER BY position,id", (d['id'],)))]
+        if k == 'project':
+            _, children, states = self.project(d['id'])
+            return [states[i] for i in children.get(None, [])]
+        return []
+
     def state(self, node):
         """2 done, 1 under way, 0 not yet, or None for what has no state."""
         k, d = node.kind, node.data
+        if k in ('path', 'book', 'project'):
+            parts = self.parts_states(node)
+            return None if not parts else 2 if all(p == 2 for p in parts) else 1 if any(parts) else 0
         if k == 'activity':
             return self.learning(d['path_id'])[2].get(d['id'], 0)
         if k == 'chapter':
@@ -166,19 +274,13 @@ class Desk(tc.Provider):
         k, d = node.kind, node.data
         if k == 'today':
             return f'Today · {self.today().strftime("%a %-d %b")}'
-        if k == 'path':
-            nodes, children, states = self.learning(d['id'])
-            return f'{node.name}  {boxes([states[i] for i in children.get(None, [])])}'
-        if k == 'book':
-            chapters = self.store.rows("SELECT reading FROM chapters WHERE book_id=? ORDER BY position,id", (d['id'],))
-            return f'{node.name}  {boxes([c["reading"] for c in chapters])}'
+        if k in ('path', 'book', 'project'):
+            bar = boxes(self.parts_states(node))
+            return node.name + (f'\n{bar}' if bar else '')
         if k == 'habit':
-            return f'{node.name}  {self.week(d)}'
+            return f'{node.name}\n{self.week(d)}'
         if k == 'skill':
             return f'{node.name} · {LEVELS[d["level"]]}'
-        if k == 'project':
-            _, children, states = self.project(d['id'])
-            return f'{node.name}  {boxes([states[i] for i in children.get(None, [])])}'
         if k == 'task' and d['every_days']:
             when = ago(d['last_done'], self.today()) if d['last_done'] else 'not yet'
             return f'{node.name} · every {d["every_days"]} days · {when}'
@@ -197,16 +299,45 @@ class Desk(tc.Provider):
             day = monday + timedelta(days=n)
             got = counts.get(day.isoformat(), 0)
             out.append(' ' if day > today else '■' if got >= goal else '□' if got else '·')
-        return ''.join(out)
+        return ' '.join(out).rstrip()
 
     def mark(self, node):
-        if node.kind == 'bullet' and node.data['migrated']:
+        """Before its title (mark_before): what state it's in, or what it is."""
+        k = node.kind
+        if k in ('info', 'root') or k in dict(SECTIONS):
+            return None
+        if k == 'bullet' and node.data['migrated']:
             return 'stub', '›', '>'
-        if node.kind == 'idea' and node.data.get('project_id'):
-            return 'git_staged', '↳', '>'
-        if node.kind in ('path', 'book', 'habit', 'skill', 'project', 'idea') and node.data.get('pinned'):
-            return 'git_staged', '★', '*'
-        return STATE.get(self.state(node))
+        if k == 'bullet' and node.data['note']:
+            return 'stub', '–', '-'
+        if k == 'idea' and node.data.get('project_id'):
+            return 'state_done', '↳', '>'
+        if k in ('path', 'book', 'habit', 'skill', 'project', 'idea') and node.data.get('pinned'):
+            return 'state_doing', '★', '*'
+        state = self.state(node)
+        if state is None and k in ('bullet', 'habit', 'skill', 'idea'):
+            state = 0
+        return STATE.get(state)
+
+    def mark_before(self, node):
+        return True
+
+    def colour(self, node):
+        """Finished green, under way amber (the theme's), notes quiet."""
+        if node.kind == 'info':
+            return 'stub', False
+        role = COLOUR.get(self.state(node))
+        return (role, False) if role else None
+
+    def line(self, node):
+        return COLOUR.get(self.state(node))
+
+    def width(self, node):
+        return INFO_WIDTH if node.kind == 'info' and '\n' not in node.data else None
+
+    def start_at(self, node):
+        """Going in lands past the notes, on the first thing itself."""
+        return len(self.info(node)) if node.kind not in ('root', 'info') else 0
 
     def dim(self, node):
         k, d = node.kind, node.data
@@ -217,50 +348,6 @@ class Desk(tc.Provider):
         if k == 'activity' and self.state(node) != 2 and self.unmet(d['path_id'], d['id']):
             return 0.6                      # suggested to wait: it isn't locked, just quieter
         return 1.0
-
-    # -- the pane
-    def preview(self, node):
-        k, d, s = node.kind, node.data, self.store
-        if k == 'root':
-            return 'Enter marks or opens · ⌃P plans into Today · ⌃N adds · ⌃R continues · ⌃Z undoes'
-        if k in ('today', 'page'):
-            day = self.today().isoformat() if k == 'today' else d
-            rows = s.rows("SELECT * FROM bullets WHERE day=?", (day,))
-            tasks = [b for b in rows if not b['note']]
-            return (f'{sum(b["done"] for b in tasks)} of {len(tasks)} done, {len(rows) - len(tasks)} notes\n\n'
-                    '⌃N adds to the page; start with "- " for a note.')
-        if k == 'bullet':
-            linked = self.linked(d)
-            return d['text'] + (f'\n\n{linked}' if linked else '') + ('\n\n(carried forward)' if d['migrated'] else '')
-        if k == 'path':
-            nxt = s.next_activity(d['id'])
-            title = s.rows("SELECT title FROM activities WHERE id=?", (nxt,))[0]['title'] if nxt else None
-            return (d.get('description') or '') + (f'\n\nNext: {title}  (⌃R)' if title else '\n\nNothing required is ready.')
-        if k == 'activity':
-            lines = [f'{d["kind"]}' + (' · optional' if d['optional'] else '')]
-            if d['resource_uid']:
-                res = s.rows("SELECT title, url FROM resources WHERE uid=?", (d['resource_uid'],))
-                if res:
-                    lines.append('Source: ' + res[0]['title'] + (f'\n{res[0]["url"]}' if res[0]['url'] else ''))
-            missing = s.unmet_prerequisites(d['path_id'], d['id'])
-            if missing:
-                lines.append('Suggested first: ' + ', '.join(missing))
-            if d['notes']:
-                lines += ['', d['notes']]
-            return '\n'.join(lines)
-        if k == 'chapter':
-            return ('not read', 'reading', 'read')[d['reading']] + (' · exercises done' if d['exercises'] else '')
-        if k == 'habit':
-            return self.heatmap(d)
-        if k == 'skill':
-            return f'{LEVELS[d["level"]]}' + (f'\n\nEvidence: {d["evidence"]}' if d['evidence'] else '')
-        if k == 'project':
-            nxt = s.next_task(d['id'])
-            title = s.rows("SELECT title FROM project_tasks WHERE id=?", (nxt,))[0]['title'] if nxt else None
-            return (d['notes'] or '') + (f'\n\nNext: {title}' if title else '')
-        if k in ('task', 'idea'):
-            return d.get('notes') or None
-        return None
 
     def heatmap(self, habit):
         """Twelve weeks, a row a weekday, as the desk's: met ■, some □, none ·."""
@@ -299,23 +386,25 @@ class Desk(tc.Provider):
         try:
             if k == 'bullet':
                 s.toggle_bullet(d['id'])
-            elif k == 'activity' and not node.is_dir:
+            elif k == 'activity' and not self.holds(node):
                 s.cycle_activity(d['id'])
             elif k == 'chapter':
                 s.cycle_chapter(d['id'])
-            elif k == 'task' and not node.is_dir:
+            elif k == 'task' and not self.holds(node):
                 if s.cycle_task(d['id']) is False:
                     self.status('mark', f'{node.name}: done already, back in {d["every_days"]} days', 'note')
-                    return None
+                    return tc.STAY
             elif k == 'habit':
                 s.checkin(d['id'], self.today().isoformat(), 1)
+            elif k == 'info' or not node.is_dir:
+                return tc.STAY
             else:
-                return None
+                return None                     # a branch with no state of its own: it opens
         except ValueError as e:
             self.status('mark', str(e), 'failed')
-            return None
+            return tc.STAY
         self.changed_here(node)
-        return None
+        return tc.STAY                          # marked: it stays as it was, not opened onto its notes
 
     def changed_here(self, node):
         """After a change: everything again (one query each), and the node flashes."""
@@ -325,7 +414,7 @@ class Desk(tc.Provider):
     def actions(self, node):
         k = node.kind
         out = []
-        if (k in ('activity', 'task') and not node.is_dir) or k in ('chapter', 'habit'):
+        if (k in ('activity', 'task') and not self.holds(node)) or k in ('chapter', 'habit'):
             out.append(('\x10', 'plan', '⌃P plan'))
         if k in ('today', 'page', 'paths', 'path', 'activity', 'library', 'book', 'habits', 'projects', 'project',
                  'task', 'ideas', 'bullet'):
@@ -420,7 +509,7 @@ class Desk(tc.Provider):
             canvas.ask('a new path', typed(lambda t: s.add_path(t.strip())))
         elif k in ('path', 'activity'):
             path_id = d['path_id'] if k == 'activity' else d['id']
-            parent = d['id'] if k == 'activity' and node.is_dir else d.get('parent_id') if k == 'activity' else None
+            parent = d['id'] if k == 'activity' and self.holds(node) else d.get('parent_id') if k == 'activity' else None
             canvas.ask('a new activity', typed(lambda t: s.add_activity(path_id, t.strip(), parent_id=parent)))
         elif k == 'library':
             canvas.ask('a new book (its chapters after a |, split by ;)', typed(
@@ -433,7 +522,7 @@ class Desk(tc.Provider):
             canvas.ask('a new project', typed(lambda t: s.add_project(t.strip())))
         elif k in ('project', 'task'):
             project = d['project_id'] if k == 'task' else d['id']
-            parent = d['id'] if k == 'task' and node.is_dir else d.get('parent_id') if k == 'task' else None
+            parent = d['id'] if k == 'task' and self.holds(node) else d.get('parent_id') if k == 'task' else None
             canvas.ask('a new step', typed(lambda t: s.add_task(project, t.strip(), parent)))
         elif k == 'ideas':
             canvas.ask('a new idea', typed(lambda t: s.add_idea(t.strip())))
@@ -441,4 +530,5 @@ class Desk(tc.Provider):
 
 def run(store, path=None):
     """The canvas, in the terminal, until Esc."""
-    tc.pick('', provider=Desk(store, path), glyphs='plain', colmax=40)
+    # peek: the branch you're on shows what's in it (its notes first) before you go in
+    tc.pick('', provider=Desk(store, path), glyphs='plain', colmax=40, peek=True)

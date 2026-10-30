@@ -81,9 +81,12 @@ uv run tuido --canvas            # or --canvas --demo
 The same desk, drawn as one tree you move across with
 [treecanvas](https://github.com/3-mmc/treecanvas): Today and its earlier pages, Paths, Library,
 Habits, Skills, Projects and Ideas branch from the root, each as deep as it goes. Every folder you
-open keeps its place; the camera follows you. Progress shows as boxes (▰ done, ◧ under way), habits
-show this week a box a day, and the pane beside shows notes, sources, what's suggested first, and a
-habit's twelve weeks. Pinned focus and the chosen shelf narrow it as they do the desk.
+open keeps its place; the camera follows you. Each item's state comes before its title (○ not
+started, ◐ under way, ✓ done, › carried forward), and finished work turns green, work under way
+amber, the line into it too. Paths, books and projects carry a bar under their title, a block a
+part; habits, this week a box a day. What there is to say about something (notes, its source,
+what's suggested first, what's next, a habit's twelve weeks) is on the canvas beside it, shown as
+you move onto it. Pinned focus and the chosen shelf narrow it as they do the desk.
 
 | key | does |
 | --- | --- |
