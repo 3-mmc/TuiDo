@@ -236,16 +236,7 @@ class LearningUI:
         self.render_activity_info()
 
     def unmet_prerequisites(self, node_id):
-        nodes, _, states = self.store.learning_snapshot(self.path_id)
-        by_uid = {n["uid"]: n for n in nodes.values()}
-        missing = []
-        current = nodes.get(node_id)
-        while current:
-            for uid in json.loads(current["requires"]):
-                if uid in by_uid and states[by_uid[uid]["id"]] != 2:
-                    missing.append(by_uid[uid]["title"])
-            current = nodes.get(current["parent_id"])
-        return list(dict.fromkeys(missing))
+        return self.store.unmet_prerequisites(self.path_id, node_id)
 
     def render_activity_info(self):
         node_id = self.row_id(self.query_one("#syllabus", DataTable))
@@ -342,20 +333,8 @@ class LearningUI:
     def action_continue(self):
         if self.mode != "paths" or self.path_id is None:
             return
-        nodes, children, states = self.store.learning_snapshot(self.path_id)
-        def search(parent=None, optional=False):
-            for node_id in children.get(parent, []):
-                node = nodes[node_id]
-                if optional or node["optional"]:
-                    continue
-                if children.get(node_id):
-                    found = search(node_id)
-                    if found:
-                        return found
-                elif states[node_id] != 2 and not self.unmet_prerequisites(node_id):
-                    return node_id
-            return None
-        next_id = search()
+        nodes, _, _ = self.store.learning_snapshot(self.path_id)
+        next_id = self.store.next_activity(self.path_id)
         if not next_id:
             self.status("No unfinished required activity is ready. Review optional work or prerequisites.")
             return

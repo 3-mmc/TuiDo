@@ -160,6 +160,37 @@ class LearningStore:
             state(node_id)
         return by_id, children, states
 
+    def unmet_prerequisites(self, path_id, node_id):
+        """Titles of what this activity, or a module it is in, suggests finishing first and is not finished."""
+        nodes, _, states = self.learning_snapshot(path_id)
+        by_uid = {n["uid"]: n for n in nodes.values()}
+        missing = []
+        current = nodes.get(node_id)
+        while current:
+            for uid in json.loads(current["requires"]):
+                if uid in by_uid and states[by_uid[uid]["id"]] != 2:
+                    missing.append(by_uid[uid]["title"])
+            current = nodes.get(current["parent_id"])
+        return list(dict.fromkeys(missing))
+
+    def next_activity(self, path_id):
+        """Continue: the first unfinished required activity, in outline order, whose suggested
+        prerequisites are complete. None when nothing is ready."""
+        nodes, children, states = self.learning_snapshot(path_id)
+
+        def search(parent=None):
+            for node_id in children.get(parent, []):
+                if nodes[node_id]["optional"]:
+                    continue
+                if children.get(node_id):
+                    found = search(node_id)
+                    if found:
+                        return found
+                elif states[node_id] != 2 and not self.unmet_prerequisites(path_id, node_id):
+                    return node_id
+            return None
+        return search()
+
     def _set_activity(self, activity_id, state):
         node = self.rows("SELECT * FROM activities WHERE id=?", (activity_id,))[0]
         if self.rows("SELECT id FROM activities WHERE parent_id=? AND active=1", (activity_id,)):
